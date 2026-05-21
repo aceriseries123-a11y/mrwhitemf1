@@ -5,6 +5,26 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getBenchmarkCode } from "./benchmarks";
+async function fetchWithTimeout(
+  url: string,
+  timeout = 10000
+) {
+  const controller = new AbortController();
+
+  const id = setTimeout(() => {
+    controller.abort();
+  }, timeout);
+
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+    });
+
+    return response;
+  } finally {
+    clearTimeout(id);
+  }
+}
 
 const AMFI_URL = "https://corsproxy.io/?https://www.amfiindia.com/spages/NAVAll.txt";
 const MFAPI = (code: string) => `https://api.mfapi.in/mf/${code}`;
@@ -137,7 +157,7 @@ async function loadSchemes(): Promise<Scheme[]> {
   const cached = sanitizeSchemes(lsGet<Scheme[]>(SCHEMES_CACHE_KEY));
   if (cached) return cached;
   try {
-    const res = await fetch(AMFI_URL);
+    const res = await fetchWithTimeout(AMFI_URL, 10000);
     if (!res.ok) throw new Error(`AMFI ${res.status}`);
     const text = await res.text();
     const parsed = parseAMFI(text);
@@ -152,14 +172,18 @@ async function loadSchemes(): Promise<Scheme[]> {
 }
 
 async function loadCuratedSchemes(): Promise<Scheme[]> {
-  const rows = await Promise.all(CURATED_CODES.map(async (schemeCode) => {
-    const h = await fetchNavHistory(schemeCode);
-    const last = h.series[h.series.length - 1];
-    if (!last) return null;
+  const rows: Scheme[] = [];
+
+for (const schemeCode of CURATED_CODES.slice(0, 10)) {
+
+  const h = await fetchNavHistory(schemeCode);
+  const last = h.series[h.series.length - 1];
+
+  if (!last) continue;
     const schemeName = h.meta.scheme_name || `AMFI ${schemeCode}`;
     const category = h.meta.scheme_category || "Other";
     const { group, bucket } = classify(category + " " + schemeName);
-    return {
+    rows.push({
       schemeCode,
       schemeName,
       nav: last.nav,
@@ -168,8 +192,8 @@ async function loadCuratedSchemes(): Promise<Scheme[]> {
       group,
       bucket,
       amc: h.meta.fund_house || inferAMC(schemeName),
-    } satisfies Scheme;
-  }));
+    } satisfies Scheme);
+  };
   return rows.filter((s): s is Scheme => !!s && isRealSchemeCode(s.schemeCode));
 }
 
