@@ -20,6 +20,7 @@ export const Route = createFileRoute("/dashboard")({
 type Row = { code: string; name: string; bucket: string; amc: string; m: Metrics };
 
 function Dashboard() {
+  
   const { schemes } = useAMFISchemes();
   const metricsByCode = useCuratedMetrics();
 
@@ -177,7 +178,7 @@ function LiveTicker() {
         <div key={t.label} className="flex items-center gap-2">
           <span className="text-muted-foreground">{t.label}</span>
           <span>{t.nav != null ? t.nav.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—"}</span>
-          {t.chg != null ? (
+          {typeof t.chg === "number" ? (
             <span className={t.chg < 0 ? "text-negative" : "text-positive"}>
               {t.chg >= 0 ? "+" : ""}{t.chg.toFixed(2)}%
             </span>
