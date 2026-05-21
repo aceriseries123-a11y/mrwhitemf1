@@ -52,6 +52,7 @@
     "echarts": "^6.0.0",
     "echarts-for-react": "^3.0.6",
     "embla-carousel-react": "^8.6.0",
+    "finnhub": "^2.0.14",
     "framer-motion": "^12.38.0",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.575.0",

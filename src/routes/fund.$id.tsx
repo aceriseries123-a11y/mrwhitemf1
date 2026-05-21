@@ -68,7 +68,7 @@ function FundPage() {
             <div className="mt-1 text-xs text-muted-foreground">
               AMC: {amc} · Latest NAV: ₹{history?.series[history.series.length - 1]?.nav.toFixed(4) ?? "—"}
               {history?.series.length ? ` · as of ${history.series[history.series.length - 1].date.toISOString().slice(0, 10)}` : ""}
-              {" · "}AUM: N/A <span title="AUM data requires AMFI subscription">ⓘ</span>
+              {" · "}AUM: {scheme?.aum ? `₹ ${scheme.aum.toLocaleString()} Cr` : "N/A"} <span title="AUM data requires AMFI subscription">ⓘ</span>
             </div>
           </div>
           <div className="rounded-xl border border-cyan/30 bg-cyan/5 px-4 py-3 text-right">
