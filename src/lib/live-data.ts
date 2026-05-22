@@ -457,50 +457,13 @@ export function fetchMetrics(code: string): Promise<Metrics> {
   return p;
 }
 
-// ----- Index ticker -----
-export const TICKERS = [
-  { label: "NIFTY 50", symbol: "^NSEI" },
-  { label: "NIFTY MIDCAP", symbol: "NIFTY_MID_SELECT.NS" },
-  { label: "BANK NIFTY", symbol: "^NSEBANK" },
-  { label: "GOLD", symbol: "GOLDBEES.NS" },
-  { label: "USD/INR", symbol: "INR=X" },
-];
-
+// ----- Index ticker (real-time via /api/public/market-ticks) -----
 export type Tick = { label: string; nav: number | null; chg: number | null; date: string | null };
 
 export async function fetchTicks(): Promise<Tick[]> {
-  return [
-    {
-      label: "NIFTY 50",
-      nav: 24520.3,
-      chg: 0.62,
-      date: "LIVE",
-    },
-    {
-      label: "NIFTY MIDCAP",
-      nav: 12840.5,
-      chg: 0.41,
-      date: "LIVE",
-    },
-    {
-      label: "BANK NIFTY",
-      nav: 53480.2,
-      chg: -0.18,
-      date: "LIVE",
-    },
-    {
-      label: "GOLD",
-      nav: 74210,
-      chg: 0.27,
-      date: "LIVE",
-    },
-    {
-      label: "USD/INR",
-      nav: 83.14,
-      chg: -0.05,
-      date: "LIVE",
-    },
-  ];
+  const res = await fetch("/api/public/market-ticks", { cache: "no-store" });
+  if (!res.ok) throw new Error(`ticks ${res.status}`);
+  return (await res.json()) as Tick[];
 }
 
 export function useTicks() {
@@ -511,14 +474,12 @@ export function useTicks() {
 
     const run = () =>
       fetchTicks()
-        .then(t => {
-          if (alive) setTicks(t);
-        })
+        .then(t => { if (alive) setTicks(t); })
         .catch(() => {});
 
     run();
-
-    const id = setInterval(run, 2000);
+    // Yahoo refresh ~15s; poll every 15s to stay near real-time without abuse
+    const id = setInterval(run, 15_000);
 
     return () => {
       alive = false;
@@ -528,6 +489,7 @@ export function useTicks() {
 
   return ticks;
 }
+
 
 // ----- Lazy metrics hook with batched fetching -----
 export function useMetrics(code: string | undefined) {
