@@ -33,11 +33,28 @@ function ddColor(v: number | null) {
   return "text-negative";
 }
 
+type SortKey =
+  | "name-asc" | "name-desc"
+  | "amc-asc"
+  | "nav-desc" | "nav-asc"
+  | "date-desc" | "date-asc";
+
+const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+  { value: "name-asc", label: "Name (A→Z)" },
+  { value: "name-desc", label: "Name (Z→A)" },
+  { value: "amc-asc", label: "AMC (A→Z)" },
+  { value: "nav-desc", label: "NAV (High→Low)" },
+  { value: "nav-asc", label: "NAV (Low→High)" },
+  { value: "date-desc", label: "NAV Date (Newest)" },
+  { value: "date-asc", label: "NAV Date (Oldest)" },
+];
+
 function Explorer() {
   const { schemes, loading, error } = useAMFISchemes();
   const [q, setQ] = useState("");
   const [group, setGroup] = useState<"All" | FundGroup>("All");
   const [bucket, setBucket] = useState("All");
+  const [sort, setSort] = useState<SortKey>("name-asc");
   const [page, setPage] = useState(0);
   const pageSize = 50;
 
@@ -52,12 +69,24 @@ function Explorer() {
   const filtered = useMemo(() => {
     if (!schemes) return [];
     const ql = q.toLowerCase();
-    return schemes.filter(s =>
+    const out = schemes.filter(s =>
       (group === "All" || s.group === group) &&
       (bucket === "All" || s.bucket === bucket) &&
       (!ql || s.schemeName.toLowerCase().includes(ql) || s.amc.toLowerCase().includes(ql) || s.schemeCode.includes(ql))
     );
-  }, [schemes, q, group, bucket]);
+    const cmp = (a: Scheme, b: Scheme) => {
+      switch (sort) {
+        case "name-asc": return a.schemeName.localeCompare(b.schemeName);
+        case "name-desc": return b.schemeName.localeCompare(a.schemeName);
+        case "amc-asc": return a.amc.localeCompare(b.amc) || a.schemeName.localeCompare(b.schemeName);
+        case "nav-desc": return (b.nav ?? 0) - (a.nav ?? 0);
+        case "nav-asc": return (a.nav ?? 0) - (b.nav ?? 0);
+        case "date-desc": return (b.navDate ?? "").localeCompare(a.navDate ?? "");
+        case "date-asc": return (a.navDate ?? "").localeCompare(b.navDate ?? "");
+      }
+    };
+    return out.sort(cmp);
+  }, [schemes, q, group, bucket, sort]);
 
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const view = filtered.slice(page * pageSize, page * pageSize + pageSize);
@@ -88,10 +117,18 @@ function Explorer() {
           className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm">
           {buckets.map(c => <option key={c}>{c}</option>)}
         </select>
+        <label className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm">
+          <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
+          <select value={sort} onChange={e => { setSort(e.target.value as SortKey); setPage(0); }}
+            className="bg-transparent text-sm outline-none">
+            {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </label>
         <button onClick={downloadCsv} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm hover:bg-muted">
           <Download className="h-4 w-4" /> CSV
         </button>
       </div>
+
 
       {loading && <div className="glass rounded-2xl p-8 text-center text-sm text-muted-foreground">Loading real AMFI scheme list (this happens once, cached 6h)…</div>}
       {error && <div className="glass rounded-2xl p-4 text-sm text-negative">Failed to load AMFI feed: {error}</div>}
