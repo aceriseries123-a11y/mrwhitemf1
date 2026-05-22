@@ -111,7 +111,7 @@ function Dashboard() {
           )}
         </div>
 
-        <RankList title="Top AI Buy Score" icon={Trophy} list={topRanked} field="aiScore" />
+        <RankList title="Top AI Ranking Score" icon={Trophy} list={topRanked} field="aiScore" />
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">

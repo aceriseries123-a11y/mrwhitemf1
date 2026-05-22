@@ -44,12 +44,11 @@ function pctChg(price: number | null, prev: number | null) {
 
 async function buildTicks(): Promise<Tick[]> {
   // Fire all requests in parallel. Gift Nifty symbol: best-effort.
-  const [nifty, sensex, gold, usdinr, gift] = await Promise.all([
+  const [nifty, sensex, gold, usdinr] = await Promise.all([
     fetchQuote("^NSEI"),
     fetchQuote("^BSESN"),
     fetchQuote("GC=F"),
     fetchQuote("INR=X"),
-    fetchQuote("NIFTY_F1.NS"),
   ]);
 
   // Gold: USD/oz -> INR/10g
@@ -68,7 +67,6 @@ async function buildTicks(): Promise<Tick[]> {
   return [
     { label: "NIFTY 50", nav: nifty.price, chg: pctChg(nifty.price, nifty.prev), date: tsIso(nifty.ts) },
     { label: "SENSEX", nav: sensex.price, chg: pctChg(sensex.price, sensex.prev), date: tsIso(sensex.ts) },
-    { label: "GIFT NIFTY", nav: gift.price, chg: pctChg(gift.price, gift.prev), date: tsIso(gift.ts) },
     { label: "GOLD (₹/10g)", nav: goldNav, chg: pctChg(goldNav, goldPrev), date: tsIso(gold.ts) },
     { label: "USD/INR", nav: usdinr.price, chg: pctChg(usdinr.price, usdinr.prev), date: tsIso(usdinr.ts) },
   ];
