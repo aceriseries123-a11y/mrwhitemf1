@@ -20,6 +20,7 @@ import { Route as BacktestRouteImport } from './routes/backtest'
 import { Route as AiInsightsRouteImport } from './routes/ai-insights'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as FundIdRouteImport } from './routes/fund.$id'
+import { Route as ApiPublicMarketTicksRouteImport } from './routes/api/public/market-ticks'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -76,6 +77,11 @@ const FundIdRoute = FundIdRouteImport.update({
   path: '/fund/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicMarketTicksRoute = ApiPublicMarketTicksRouteImport.update({
+  id: '/api/public/market-ticks',
+  path: '/api/public/market-ticks',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -89,6 +95,7 @@ export interface FileRoutesByFullPath {
   '/screener': typeof ScreenerRoute
   '/settings': typeof SettingsRoute
   '/fund/$id': typeof FundIdRoute
+  '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -102,6 +109,7 @@ export interface FileRoutesByTo {
   '/screener': typeof ScreenerRoute
   '/settings': typeof SettingsRoute
   '/fund/$id': typeof FundIdRoute
+  '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -116,6 +124,7 @@ export interface FileRoutesById {
   '/screener': typeof ScreenerRoute
   '/settings': typeof SettingsRoute
   '/fund/$id': typeof FundIdRoute
+  '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -131,6 +140,7 @@ export interface FileRouteTypes {
     | '/screener'
     | '/settings'
     | '/fund/$id'
+    | '/api/public/market-ticks'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -144,6 +154,7 @@ export interface FileRouteTypes {
     | '/screener'
     | '/settings'
     | '/fund/$id'
+    | '/api/public/market-ticks'
   id:
     | '__root__'
     | '/'
@@ -157,6 +168,7 @@ export interface FileRouteTypes {
     | '/screener'
     | '/settings'
     | '/fund/$id'
+    | '/api/public/market-ticks'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -171,6 +183,7 @@ export interface RootRouteChildren {
   ScreenerRoute: typeof ScreenerRoute
   SettingsRoute: typeof SettingsRoute
   FundIdRoute: typeof FundIdRoute
+  ApiPublicMarketTicksRoute: typeof ApiPublicMarketTicksRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -252,6 +265,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FundIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/market-ticks': {
+      id: '/api/public/market-ticks'
+      path: '/api/public/market-ticks'
+      fullPath: '/api/public/market-ticks'
+      preLoaderRoute: typeof ApiPublicMarketTicksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -267,17 +287,8 @@ const rootRouteChildren: RootRouteChildren = {
   ScreenerRoute: ScreenerRoute,
   SettingsRoute: SettingsRoute,
   FundIdRoute: FundIdRoute,
+  ApiPublicMarketTicksRoute: ApiPublicMarketTicksRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
