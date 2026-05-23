@@ -490,6 +490,27 @@ export function useTicks() {
   return ticks;
 }
 
+// ----- AUM map (real, from AMFI monthly disclosure, cached 24h server-side) -----
+let _aumPromise: Promise<Record<string, number>> | null = null;
+export function fetchAumMap(): Promise<Record<string, number>> {
+  if (!_aumPromise) {
+    _aumPromise = fetch("/api/public/scheme-aum", { cache: "force-cache" })
+      .then(r => (r.ok ? r.json() : {}))
+      .catch(() => ({}));
+  }
+  return _aumPromise;
+}
+
+export function useAumMap() {
+  const [map, setMap] = useState<Record<string, number>>({});
+  useEffect(() => {
+    let alive = true;
+    fetchAumMap().then(m => { if (alive) setMap(m); });
+    return () => { alive = false; };
+  }, []);
+  return map;
+}
+
 
 // ----- Lazy metrics hook with batched fetching -----
 export function useMetrics(code: string | undefined) {
