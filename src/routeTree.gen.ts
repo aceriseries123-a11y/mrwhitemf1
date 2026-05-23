@@ -20,6 +20,7 @@ import { Route as BacktestRouteImport } from './routes/backtest'
 import { Route as AiInsightsRouteImport } from './routes/ai-insights'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as FundIdRouteImport } from './routes/fund.$id'
+import { Route as ApiPublicSchemeAumRouteImport } from './routes/api/public/scheme-aum'
 import { Route as ApiPublicMarketTicksRouteImport } from './routes/api/public/market-ticks'
 
 const SettingsRoute = SettingsRouteImport.update({
@@ -77,6 +78,11 @@ const FundIdRoute = FundIdRouteImport.update({
   path: '/fund/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicSchemeAumRoute = ApiPublicSchemeAumRouteImport.update({
+  id: '/api/public/scheme-aum',
+  path: '/api/public/scheme-aum',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicMarketTicksRoute = ApiPublicMarketTicksRouteImport.update({
   id: '/api/public/market-ticks',
   path: '/api/public/market-ticks',
@@ -96,6 +102,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/fund/$id': typeof FundIdRoute
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
+  '/api/public/scheme-aum': typeof ApiPublicSchemeAumRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -110,6 +117,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/fund/$id': typeof FundIdRoute
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
+  '/api/public/scheme-aum': typeof ApiPublicSchemeAumRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -125,6 +133,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/fund/$id': typeof FundIdRoute
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
+  '/api/public/scheme-aum': typeof ApiPublicSchemeAumRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -141,6 +150,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/fund/$id'
     | '/api/public/market-ticks'
+    | '/api/public/scheme-aum'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -155,6 +165,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/fund/$id'
     | '/api/public/market-ticks'
+    | '/api/public/scheme-aum'
   id:
     | '__root__'
     | '/'
@@ -169,6 +180,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/fund/$id'
     | '/api/public/market-ticks'
+    | '/api/public/scheme-aum'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -184,6 +196,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   FundIdRoute: typeof FundIdRoute
   ApiPublicMarketTicksRoute: typeof ApiPublicMarketTicksRoute
+  ApiPublicSchemeAumRoute: typeof ApiPublicSchemeAumRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -265,6 +278,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FundIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/scheme-aum': {
+      id: '/api/public/scheme-aum'
+      path: '/api/public/scheme-aum'
+      fullPath: '/api/public/scheme-aum'
+      preLoaderRoute: typeof ApiPublicSchemeAumRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/market-ticks': {
       id: '/api/public/market-ticks'
       path: '/api/public/market-ticks'
@@ -288,6 +308,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   FundIdRoute: FundIdRoute,
   ApiPublicMarketTicksRoute: ApiPublicMarketTicksRoute,
+  ApiPublicSchemeAumRoute: ApiPublicSchemeAumRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
