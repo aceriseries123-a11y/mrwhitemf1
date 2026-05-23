@@ -1,9 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 import { useMemo, useState } from "react";
-import { Search, Download, ArrowUpDown } from "lucide-react";
+import { Search, Download, ArrowUp, ArrowDown } from "lucide-react";
 import {
-  useAMFISchemes, useLazyMetrics, fmt, type Scheme, type FundGroup, type Metrics,
+  useAMFISchemes, useLazyMetrics, useAumMap, fmt, type Scheme, type FundGroup, type Metrics,
 } from "@/lib/live-data";
 
 export const Route = createFileRoute("/explorer")({
@@ -33,38 +33,50 @@ function ddColor(v: number | null) {
   return "text-negative";
 }
 
-type SortKey =
-  | "name-asc" | "name-desc"
-  | "amc-asc"
-  | "nav-desc" | "nav-asc"
-  | "date-desc" | "date-asc";
+type SortField =
+  | "name" | "bucket" | "aum" | "nav"
+  | "r1Y" | "r3Y" | "r5Y" | "r7Y" | "r10Y"
+  | "sharpe" | "sortino" | "alpha" | "beta" | "maxDrawdown" | "aiScore";
+type SortDir = "asc" | "desc";
 
-const SORT_OPTIONS: { value: SortKey; label: string }[] = [
-  { value: "name-asc", label: "Name (A→Z)" },
-  { value: "name-desc", label: "Name (Z→A)" },
-  { value: "amc-asc", label: "AMC (A→Z)" },
-  { value: "nav-desc", label: "NAV (High→Low)" },
-  { value: "nav-asc", label: "NAV (Low→High)" },
-  { value: "date-desc", label: "NAV Date (Newest)" },
-  { value: "date-asc", label: "NAV Date (Oldest)" },
-];
+// Cache of metrics by scheme code, populated by row-level lazy loading.
+// Lives at module scope so sort comparator can read it; updated by Row.
+const _metricsByCode = new Map<string, Metrics>();
+
+function fmtAum(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  // v is in INR crore
+  if (v >= 100000) return `₹${(v / 100000).toFixed(2)}L Cr`;
+  if (v >= 1000) return `₹${(v / 1000).toFixed(2)}k Cr`;
+  return `₹${v.toFixed(0)} Cr`;
+}
 
 function Explorer() {
   const { schemes, loading, error } = useAMFISchemes();
+  const aumMap = useAumMap();
   const [q, setQ] = useState("");
   const [group, setGroup] = useState<"All" | FundGroup>("All");
   const [bucket, setBucket] = useState("All");
-  const [sort, setSort] = useState<SortKey>("name-asc");
+  const [sortField, setSortField] = useState<SortField>("name");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [page, setPage] = useState(0);
   const pageSize = 50;
+  // bump to re-sort when metrics arrive
+  const [, setTick] = useState(0);
+  const bumpSort = () => setTick(t => t + 1);
 
-  // build bucket list filtered by group
   const buckets = useMemo(() => {
     if (!schemes) return ["All"];
     const set = new Set<string>();
     for (const s of schemes) if (group === "All" || s.group === group) set.add(s.bucket);
     return ["All", ...[...set].sort()];
   }, [schemes, group]);
+
+  function toggleSort(f: SortField) {
+    if (sortField === f) setSortDir(d => (d === "asc" ? "desc" : "asc"));
+    else { setSortField(f); setSortDir(f === "name" || f === "bucket" ? "asc" : "desc"); }
+    setPage(0);
+  }
 
   const filtered = useMemo(() => {
     if (!schemes) return [];
@@ -74,27 +86,37 @@ function Explorer() {
       (bucket === "All" || s.bucket === bucket) &&
       (!ql || s.schemeName.toLowerCase().includes(ql) || s.amc.toLowerCase().includes(ql) || s.schemeCode.includes(ql))
     );
-    const cmp = (a: Scheme, b: Scheme) => {
-      switch (sort) {
-        case "name-asc": return a.schemeName.localeCompare(b.schemeName);
-        case "name-desc": return b.schemeName.localeCompare(a.schemeName);
-        case "amc-asc": return a.amc.localeCompare(b.amc) || a.schemeName.localeCompare(b.schemeName);
-        case "nav-desc": return (b.nav ?? 0) - (a.nav ?? 0);
-        case "nav-asc": return (a.nav ?? 0) - (b.nav ?? 0);
-        case "date-desc": return (b.navDate ?? "").localeCompare(a.navDate ?? "");
-        case "date-asc": return (a.navDate ?? "").localeCompare(b.navDate ?? "");
-      }
+
+    const dir = sortDir === "asc" ? 1 : -1;
+    const numeric = (a: number | null | undefined, b: number | null | undefined) => {
+      const av = a == null || isNaN(a) ? -Infinity : a;
+      const bv = b == null || isNaN(b) ? -Infinity : b;
+      return (av - bv) * dir;
     };
-    return out.sort(cmp);
-  }, [schemes, q, group, bucket, sort]);
+    const metric = (code: string, k: keyof Metrics) => {
+      const m = _metricsByCode.get(code);
+      return m ? (m[k] as number | null) : null;
+    };
+
+    out.sort((a, b) => {
+      switch (sortField) {
+        case "name": return a.schemeName.localeCompare(b.schemeName) * dir;
+        case "bucket": return (a.bucket.localeCompare(b.bucket) || a.schemeName.localeCompare(b.schemeName)) * dir;
+        case "aum": return numeric(aumMap[a.schemeCode], aumMap[b.schemeCode]);
+        case "nav": return numeric(a.nav, b.nav);
+        default: return numeric(metric(a.schemeCode, sortField), metric(b.schemeCode, sortField));
+      }
+    });
+    return out;
+  }, [schemes, q, group, bucket, sortField, sortDir, aumMap]);
 
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const view = filtered.slice(page * pageSize, page * pageSize + pageSize);
 
   function downloadCsv() {
-    const header = ["schemeCode","schemeName","amc","group","bucket","nav","navDate"].join(",");
+    const header = ["schemeCode","schemeName","amc","group","bucket","nav","navDate","aum_cr"].join(",");
     const esc = (v: unknown) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const csv = [header, ...filtered.map(r => [r.schemeCode, r.schemeName, r.amc, r.group, r.bucket, r.nav, r.navDate].map(esc).join(","))].join("\n");
+    const csv = [header, ...filtered.map(r => [r.schemeCode, r.schemeName, r.amc, r.group, r.bucket, r.nav, r.navDate, aumMap[r.schemeCode] ?? ""].map(esc).join(","))].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `funds-${new Date().toISOString().slice(0,10)}.csv`;
@@ -117,18 +139,10 @@ function Explorer() {
           className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm">
           {buckets.map(c => <option key={c}>{c}</option>)}
         </select>
-        <label className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm">
-          <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
-          <select value={sort} onChange={e => { setSort(e.target.value as SortKey); setPage(0); }}
-            className="bg-transparent text-sm outline-none">
-            {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </label>
         <button onClick={downloadCsv} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm hover:bg-muted">
           <Download className="h-4 w-4" /> CSV
         </button>
       </div>
-
 
       {loading && <div className="glass rounded-2xl p-8 text-center text-sm text-muted-foreground">Loading real AMFI scheme list (this happens once, cached 6h)…</div>}
       {error && <div className="glass rounded-2xl p-4 text-sm text-negative">Failed to load AMFI feed: {error}</div>}
@@ -139,24 +153,25 @@ function Explorer() {
           <table className="min-w-full text-xs">
             <thead className="sticky top-0 bg-surface/90 text-muted-foreground backdrop-blur">
               <tr className="border-b border-border">
-                <Th>Scheme</Th>
-                <Th>Category</Th>
-                <Th>NAV</Th>
-                <Th>1Y</Th>
-                <Th>3Y</Th>
-                <Th>5Y</Th>
-                <Th>7Y</Th>
-                <Th>10Y</Th>
-                <Th>Sharpe</Th>
-                <Th>Sortino</Th>
-                <Th>Alpha</Th>
-                <Th>Beta</Th>
-                <Th>Max DD</Th>
-                <Th>AI Score</Th>
+                <Th field="name" sortField={sortField} sortDir={sortDir} onClick={toggleSort}>Scheme</Th>
+                <Th field="bucket" sortField={sortField} sortDir={sortDir} onClick={toggleSort}>Category</Th>
+                <Th field="aum" sortField={sortField} sortDir={sortDir} onClick={toggleSort}>AUM</Th>
+                <Th field="nav" sortField={sortField} sortDir={sortDir} onClick={toggleSort}>NAV</Th>
+                <Th field="r1Y" sortField={sortField} sortDir={sortDir} onClick={toggleSort}>1Y</Th>
+                <Th field="r3Y" sortField={sortField} sortDir={sortDir} onClick={toggleSort}>3Y</Th>
+                <Th field="r5Y" sortField={sortField} sortDir={sortDir} onClick={toggleSort}>5Y</Th>
+                <Th field="r7Y" sortField={sortField} sortDir={sortDir} onClick={toggleSort}>7Y</Th>
+                <Th field="r10Y" sortField={sortField} sortDir={sortDir} onClick={toggleSort}>10Y</Th>
+                <Th field="sharpe" sortField={sortField} sortDir={sortDir} onClick={toggleSort}>Sharpe</Th>
+                <Th field="sortino" sortField={sortField} sortDir={sortDir} onClick={toggleSort}>Sortino</Th>
+                <Th field="alpha" sortField={sortField} sortDir={sortDir} onClick={toggleSort}>Alpha</Th>
+                <Th field="beta" sortField={sortField} sortDir={sortDir} onClick={toggleSort}>Beta</Th>
+                <Th field="maxDrawdown" sortField={sortField} sortDir={sortDir} onClick={toggleSort}>Max DD</Th>
+                <Th field="aiScore" sortField={sortField} sortDir={sortDir} onClick={toggleSort}>AI Score</Th>
               </tr>
             </thead>
             <tbody className="font-mono">
-              {view.map(s => <Row key={s.schemeCode} s={s} />)}
+              {view.map(s => <Row key={s.schemeCode} s={s} aum={aumMap[s.schemeCode] ?? null} onMetrics={bumpSort} />)}
             </tbody>
           </table>
         </div>
@@ -168,7 +183,7 @@ function Explorer() {
           </div>
         </div>
         <div className="border-t border-border px-4 py-2 text-[10px] text-muted-foreground">
-          Source: AMFI India & MFAPI.in · Metrics computed lazily from real NAV history.
+          Source: AMFI India (NAV daily, AUM monthly) & MFAPI.in · Click any column header to sort. Metrics computed lazily from real NAV history.
         </div>
       </div>
       )}
@@ -176,10 +191,16 @@ function Explorer() {
   );
 }
 
-function Row({ s }: { s: Scheme }) {
+function Row({ s, aum, onMetrics }: { s: Scheme; aum: number | null; onMetrics: () => void }) {
   const { ref, metrics } = useLazyMetrics(s.schemeCode);
   const m: Partial<Metrics> = metrics ?? {};
   const ai = m.aiScore ?? null;
+  // Publish metrics for sort comparator
+  if (metrics && _metricsByCode.get(s.schemeCode) !== metrics) {
+    _metricsByCode.set(s.schemeCode, metrics);
+    // microtask schedule to avoid render churn
+    queueMicrotask(onMetrics);
+  }
   return (
     <tr ref={ref} className="border-b border-border/60 transition hover:bg-surface/60">
       <td className="px-3 py-2">
@@ -189,6 +210,7 @@ function Row({ s }: { s: Scheme }) {
         <div className="text-[10px] text-muted-foreground">{s.amc} · {s.schemeCode}</div>
       </td>
       <td className="px-3 py-2 text-muted-foreground">{s.bucket}</td>
+      <td className="px-3 py-2">{fmtAum(aum)}</td>
       <td className="px-3 py-2">{s.nav.toFixed(2)}</td>
       <td className={"px-3 py-2 " + retColor(m.r1Y ?? null)}>{fmt.pct(m.r1Y, 2)}</td>
       <td className={"px-3 py-2 " + retColor(m.r3Y ?? null)}>{fmt.pct(m.r3Y, 2)}</td>
@@ -205,6 +227,26 @@ function Row({ s }: { s: Scheme }) {
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
-  return <th className="whitespace-nowrap px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider"><span className="inline-flex items-center gap-1">{children}</span></th>;
+function Th({
+  children, field, sortField, sortDir, onClick,
+}: {
+  children: React.ReactNode;
+  field: SortField;
+  sortField: SortField;
+  sortDir: SortDir;
+  onClick: (f: SortField) => void;
+}) {
+  const active = sortField === field;
+  return (
+    <th className="whitespace-nowrap px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider">
+      <button
+        type="button"
+        onClick={() => onClick(field)}
+        className={"inline-flex items-center gap-1 hover:text-foreground " + (active ? "text-cyan" : "")}
+      >
+        {children}
+        {active ? (sortDir === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />) : null}
+      </button>
+    </th>
+  );
 }
