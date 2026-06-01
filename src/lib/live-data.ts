@@ -162,7 +162,8 @@ async function loadSchemes(): Promise<Scheme[]> {
   const cached = sanitizeSchemes(lsGet<Scheme[]>(SCHEMES_CACHE_KEY));
   if (cached) return cached;
   try {
-    const res = await fetchWithTimeout(AMFI_URL, 10000);
+    let res = await fetchWithTimeout(AMFI_URL, 15000);
+    if (!res.ok) res = await fetchWithTimeout(AMFI_FALLBACK_URL, 15000);
     if (!res.ok) throw new Error(`AMFI ${res.status}`);
     const text = await res.text();
     const parsed = parseAMFI(text);
