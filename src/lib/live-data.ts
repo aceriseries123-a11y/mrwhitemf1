@@ -490,26 +490,82 @@ export function useTicks() {
   return ticks;
 }
 
-// ----- AUM map (real, from AMFI monthly disclosure, cached 24h server-side) -----
-let _aumPromise: Promise<Record<string, number>> | null = null;
-export function fetchAumMap(): Promise<Record<string, number>> {
-  if (!_aumPromise) {
-    _aumPromise = fetch("/api/public/scheme-aum", { cache: "force-cache" })
-      .then(r => (r.ok ? r.json() : {}))
-      .catch(() => ({}));
+// ----- AUM map (per-scheme via Kuvera, lazily by visible codes) -----
+const _aumCache = new Map<string, number>();
+const _aumInflight = new Map<string, Promise<void>>();
+
+async function _fetchAumBatch(codes: string[]): Promise<void> {
+  if (!codes.length) return;
+  try {
+    const r = await fetch(
+      `/api/public/scheme-aum?codes=${encodeURIComponent(codes.join(","))}`,
+      { cache: "force-cache" }
+    );
+    if (!r.ok) return;
+    const j: Record<string, number> = await r.json();
+    for (const k of Object.keys(j)) {
+      const v = Number(j[k]);
+      if (Number.isFinite(v)) _aumCache.set(k, v);
+    }
+  } catch {
+    /* ignore */
   }
-  return _aumPromise;
 }
 
-export function useAumMap() {
-  const [map, setMap] = useState<Record<string, number>>({});
+export function useAumMap(codes?: string[]): Record<string, number> {
+  const key = (codes ?? []).slice().sort().join(",");
+  const [, setTick] = useState(0);
+
   useEffect(() => {
+    if (!codes || !codes.length) return;
+    const missing = codes.filter(c => !_aumCache.has(c) && !_aumInflight.has(c));
+    if (!missing.length) return;
+
+    // Chunk to keep URL short and server fan-out bounded.
+    const CHUNK = 30;
+    const chunks: string[][] = [];
+    for (let i = 0; i < missing.length; i += CHUNK) {
+      chunks.push(missing.slice(i, i + CHUNK));
+    }
+    const promises = chunks.map(chunk => {
+      const p = _fetchAumBatch(chunk).finally(() => {
+        for (const c of chunk) _aumInflight.delete(c);
+      });
+      for (const c of chunk) _aumInflight.set(c, p);
+      return p;
+    });
     let alive = true;
-    fetchAumMap().then(m => { if (alive) setMap(m); });
-    return () => { alive = false; };
-  }, []);
-  return map;
+    Promise.all(promises).then(() => {
+      if (alive) setTick(t => t + 1);
+    });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  // Return snapshot of cached entries for requested codes.
+  const out: Record<string, number> = {};
+  if (codes) {
+    for (const c of codes) {
+      const v = _aumCache.get(c);
+      if (v != null) out[c] = v;
+    }
+  }
+  return out;
 }
+
+export function fetchAumMap(codes: string[]): Promise<Record<string, number>> {
+  return _fetchAumBatch(codes).then(() => {
+    const out: Record<string, number> = {};
+    for (const c of codes) {
+      const v = _aumCache.get(c);
+      if (v != null) out[c] = v;
+    }
+    return out;
+  });
+}
+
 
 
 // ----- Lazy metrics hook with batched fetching -----
