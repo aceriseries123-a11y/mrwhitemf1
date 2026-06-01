@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Search, Download, ArrowUp, ArrowDown } from "lucide-react";
 import {
   useAMFISchemes, useLazyMetrics, useAumMap, fmt, type Scheme, type FundGroup, type Metrics,
@@ -53,7 +53,8 @@ function fmtAum(v: number | null | undefined): string {
 
 function Explorer() {
   const { schemes, loading, error } = useAMFISchemes();
-  const aumMap = useAumMap();
+  const [visibleCodes, setVisibleCodes] = useState<string[]>([]);
+  const aumMap = useAumMap(visibleCodes);
   const [q, setQ] = useState("");
   const [group, setGroup] = useState<"All" | FundGroup>("All");
   const [bucket, setBucket] = useState("All");
@@ -112,6 +113,13 @@ function Explorer() {
 
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const view = filtered.slice(page * pageSize, page * pageSize + pageSize);
+
+  // Sync visible scheme codes so AUM is fetched only for what's on screen.
+  const viewCodesKey = view.map(s => s.schemeCode).join(",");
+  useEffect(() => {
+    setVisibleCodes(view.map(s => s.schemeCode));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewCodesKey]);
 
   function downloadCsv() {
     const header = ["schemeCode","schemeName","amc","group","bucket","nav","navDate","aum_cr"].join(",");
@@ -183,7 +191,7 @@ function Explorer() {
           </div>
         </div>
         <div className="border-t border-border px-4 py-2 text-[10px] text-muted-foreground">
-          Source: AMFI India (NAV daily, AUM monthly) & MFAPI.in · Click any column header to sort. Metrics computed lazily from real NAV history.
+          Source: AMFI India (NAV daily) · MFAPI.in · Kuvera (approximate per-plan AUM) · Click any column header to sort.
         </div>
       </div>
       )}
