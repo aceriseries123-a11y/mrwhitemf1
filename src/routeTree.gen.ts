@@ -22,6 +22,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as FundIdRouteImport } from './routes/fund.$id'
 import { Route as ApiPublicSchemeAumRouteImport } from './routes/api/public/scheme-aum'
 import { Route as ApiPublicMarketTicksRouteImport } from './routes/api/public/market-ticks'
+import { Route as ApiPublicAmfiNavallRouteImport } from './routes/api/public/amfi-navall'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -88,6 +89,11 @@ const ApiPublicMarketTicksRoute = ApiPublicMarketTicksRouteImport.update({
   path: '/api/public/market-ticks',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicAmfiNavallRoute = ApiPublicAmfiNavallRouteImport.update({
+  id: '/api/public/amfi-navall',
+  path: '/api/public/amfi-navall',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -101,6 +107,7 @@ export interface FileRoutesByFullPath {
   '/screener': typeof ScreenerRoute
   '/settings': typeof SettingsRoute
   '/fund/$id': typeof FundIdRoute
+  '/api/public/amfi-navall': typeof ApiPublicAmfiNavallRoute
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
   '/api/public/scheme-aum': typeof ApiPublicSchemeAumRoute
 }
@@ -116,6 +123,7 @@ export interface FileRoutesByTo {
   '/screener': typeof ScreenerRoute
   '/settings': typeof SettingsRoute
   '/fund/$id': typeof FundIdRoute
+  '/api/public/amfi-navall': typeof ApiPublicAmfiNavallRoute
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
   '/api/public/scheme-aum': typeof ApiPublicSchemeAumRoute
 }
@@ -132,6 +140,7 @@ export interface FileRoutesById {
   '/screener': typeof ScreenerRoute
   '/settings': typeof SettingsRoute
   '/fund/$id': typeof FundIdRoute
+  '/api/public/amfi-navall': typeof ApiPublicAmfiNavallRoute
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
   '/api/public/scheme-aum': typeof ApiPublicSchemeAumRoute
 }
@@ -149,6 +158,7 @@ export interface FileRouteTypes {
     | '/screener'
     | '/settings'
     | '/fund/$id'
+    | '/api/public/amfi-navall'
     | '/api/public/market-ticks'
     | '/api/public/scheme-aum'
   fileRoutesByTo: FileRoutesByTo
@@ -164,6 +174,7 @@ export interface FileRouteTypes {
     | '/screener'
     | '/settings'
     | '/fund/$id'
+    | '/api/public/amfi-navall'
     | '/api/public/market-ticks'
     | '/api/public/scheme-aum'
   id:
@@ -179,6 +190,7 @@ export interface FileRouteTypes {
     | '/screener'
     | '/settings'
     | '/fund/$id'
+    | '/api/public/amfi-navall'
     | '/api/public/market-ticks'
     | '/api/public/scheme-aum'
   fileRoutesById: FileRoutesById
@@ -195,6 +207,7 @@ export interface RootRouteChildren {
   ScreenerRoute: typeof ScreenerRoute
   SettingsRoute: typeof SettingsRoute
   FundIdRoute: typeof FundIdRoute
+  ApiPublicAmfiNavallRoute: typeof ApiPublicAmfiNavallRoute
   ApiPublicMarketTicksRoute: typeof ApiPublicMarketTicksRoute
   ApiPublicSchemeAumRoute: typeof ApiPublicSchemeAumRoute
 }
@@ -292,6 +305,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicMarketTicksRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/amfi-navall': {
+      id: '/api/public/amfi-navall'
+      path: '/api/public/amfi-navall'
+      fullPath: '/api/public/amfi-navall'
+      preLoaderRoute: typeof ApiPublicAmfiNavallRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -307,6 +327,7 @@ const rootRouteChildren: RootRouteChildren = {
   ScreenerRoute: ScreenerRoute,
   SettingsRoute: SettingsRoute,
   FundIdRoute: FundIdRoute,
+  ApiPublicAmfiNavallRoute: ApiPublicAmfiNavallRoute,
   ApiPublicMarketTicksRoute: ApiPublicMarketTicksRoute,
   ApiPublicSchemeAumRoute: ApiPublicSchemeAumRoute,
 }
