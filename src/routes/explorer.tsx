@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Search, Download, ArrowUp, ArrowDown } from "lucide-react";
 import {
   useAMFISchemes, useLazyMetrics, useAumMap, fmt, type Scheme, type FundGroup, type Metrics,
