@@ -114,6 +114,13 @@ function Explorer() {
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const view = filtered.slice(page * pageSize, page * pageSize + pageSize);
 
+  // Sync visible scheme codes so AUM is fetched only for what's on screen.
+  const viewCodesKey = view.map(s => s.schemeCode).join(",");
+  useEffect(() => {
+    setVisibleCodes(view.map(s => s.schemeCode));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewCodesKey]);
+
   function downloadCsv() {
     const header = ["schemeCode","schemeName","amc","group","bucket","nav","navDate","aum_cr"].join(",");
     const esc = (v: unknown) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
