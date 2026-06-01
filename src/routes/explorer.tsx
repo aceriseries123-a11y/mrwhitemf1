@@ -53,7 +53,8 @@ function fmtAum(v: number | null | undefined): string {
 
 function Explorer() {
   const { schemes, loading, error } = useAMFISchemes();
-  const aumMap = useAumMap();
+  const [visibleCodes, setVisibleCodes] = useState<string[]>([]);
+  const aumMap = useAumMap(visibleCodes);
   const [q, setQ] = useState("");
   const [group, setGroup] = useState<"All" | FundGroup>("All");
   const [bucket, setBucket] = useState("All");
