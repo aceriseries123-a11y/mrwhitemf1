@@ -191,7 +191,7 @@ function Explorer() {
           </div>
         </div>
         <div className="border-t border-border px-4 py-2 text-[10px] text-muted-foreground">
-          Source: AMFI India (NAV daily, AUM monthly) & MFAPI.in · Click any column header to sort. Metrics computed lazily from real NAV history.
+          Source: AMFI India (NAV daily) · MFAPI.in · Kuvera (approximate per-plan AUM) · Click any column header to sort.
         </div>
       </div>
       )}
