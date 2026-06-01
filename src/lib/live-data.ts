@@ -26,7 +26,8 @@ async function fetchWithTimeout(
   }
 }
 
-const AMFI_URL = "https://corsproxy.io/?https://www.amfiindia.com/spages/NAVAll.txt";
+const AMFI_URL = "/api/public/amfi-navall";
+const AMFI_FALLBACK_URL = "https://corsproxy.io/?https://www.amfiindia.com/spages/NAVAll.txt";
 const MFAPI = (code: string) => `https://api.mfapi.in/mf/${code}`;
 const TTL_MS = 6 * 60 * 60 * 1000;
 const SCHEMES_CACHE_KEY = "amfi:schemes:v3:real-codes-only";
@@ -161,7 +162,8 @@ async function loadSchemes(): Promise<Scheme[]> {
   const cached = sanitizeSchemes(lsGet<Scheme[]>(SCHEMES_CACHE_KEY));
   if (cached) return cached;
   try {
-    const res = await fetchWithTimeout(AMFI_URL, 10000);
+    let res = await fetchWithTimeout(AMFI_URL, 15000);
+    if (!res.ok) res = await fetchWithTimeout(AMFI_FALLBACK_URL, 15000);
     if (!res.ok) throw new Error(`AMFI ${res.status}`);
     const text = await res.text();
     const parsed = parseAMFI(text);
