@@ -36,8 +36,9 @@ export interface AMFIScheme {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const AMFI_NAV_URL =
-  "https://www.amfiindia.com/spages/NAVAll.txt";
+// Proxied through our own origin to avoid browser CORS on amfiindia.com.
+// See src/routes/api/public/amfi-navall.ts for the edge proxy implementation.
+const AMFI_NAV_URL = "/api/public/amfi-navall";
 
 /**
  * Minimum NAV history rows required before a fund is included in rankings.
