@@ -171,36 +171,15 @@ async function loadSchemes(): Promise<Scheme[]> {
       lsSet(SCHEMES_CACHE_KEY, parsed);
       return parsed;
     }
-  } catch { /* fall back to curated real AMFI codes below */ }
-  const fallback = await loadCuratedSchemes();
-  lsSet(SCHEMES_CACHE_KEY, fallback);
-  return fallback;
+      throw new Error(`AMFI returned ${parsed.length} schemes. Expected valid dataset.`);
+  } 
+  catch (error) {
+  console.error(error);
+  throw new Error(
+    "Unable to fetch live AMFI scheme data. Rankings unavailable."
+  );
 }
 
-async function loadCuratedSchemes(): Promise<Scheme[]> {
-  const rows: Scheme[] = [];
-
-for (const schemeCode of CURATED_CODES.slice(0, 10)) {
-
- const h = await fetchNavHistory(schemeCode);
-  const last = h.series[h.series.length - 1];
-
-  if (!last) continue;
-    const schemeName = h.meta.scheme_name || `AMFI ${schemeCode}`;
-    const category = h.meta.scheme_category || "Other";
-    const { group, bucket } = classify(category + " " + schemeName);
-    rows.push({
-      schemeCode,
-      schemeName,
-      nav: last.nav,
-      navDate: last.date.toISOString().slice(0, 10),
-      category,
-      group,
-      bucket,
-      amc: h.meta.fund_house || inferAMC(schemeName),
-    } satisfies Scheme);
-  };
-  return rows.filter((s): s is Scheme => !!s && isRealSchemeCode(s.schemeCode));
 }
 
 export function useAMFISchemes() {
