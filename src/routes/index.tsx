@@ -33,7 +33,7 @@ function Landing() {
           </Link>
           <nav className="ml-10 hidden gap-6 text-sm text-muted-foreground md:flex">
             <Link to="/dashboard" className="hover:text-foreground">Dashboard</Link>
-            <Link to="/ai-insights" className="hover:text-foreground">AI Insights</Link>
+            <Link to="/research-desk" className="hover:text-foreground">Research Desk</Link>
             <Link to="/rankings" className="hover:text-foreground">Rankings</Link>
             <Link to="/portfolio" className="hover:text-foreground">Portfolio</Link>
           </nav>

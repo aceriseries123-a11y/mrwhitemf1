@@ -12,7 +12,7 @@ const NAV = [
   { to: "/portfolio", label: "Portfolio Analyzer", icon: Briefcase },
   { to: "/screener", label: "Screener", icon: Filter },
   { to: "/backtest", label: "Backtesting", icon: History },
-  { to: "/ai-insights", label: "AI Insights", icon: Sparkles },
+  { to: "/research-desk", label: "Research Desk", icon: Sparkles },
   { to: "/rankings", label: "Rankings", icon: Trophy },
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
