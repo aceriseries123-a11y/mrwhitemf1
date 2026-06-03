@@ -11,13 +11,13 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ScreenerRouteImport } from './routes/screener'
+import { Route as ResearchDeskRouteImport } from './routes/research-desk'
 import { Route as RankingsRouteImport } from './routes/rankings'
 import { Route as PortfolioRouteImport } from './routes/portfolio'
 import { Route as ExplorerRouteImport } from './routes/explorer'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as CompareRouteImport } from './routes/compare'
 import { Route as BacktestRouteImport } from './routes/backtest'
-import { Route as AiInsightsRouteImport } from './routes/ai-insights'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as FundIdRouteImport } from './routes/fund.$id'
 import { Route as ApiPublicSchemeAumRouteImport } from './routes/api/public/scheme-aum'
@@ -32,6 +32,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const ScreenerRoute = ScreenerRouteImport.update({
   id: '/screener',
   path: '/screener',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResearchDeskRoute = ResearchDeskRouteImport.update({
+  id: '/research-desk',
+  path: '/research-desk',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RankingsRoute = RankingsRouteImport.update({
@@ -64,11 +69,6 @@ const BacktestRoute = BacktestRouteImport.update({
   path: '/backtest',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AiInsightsRoute = AiInsightsRouteImport.update({
-  id: '/ai-insights',
-  path: '/ai-insights',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -97,13 +97,13 @@ const ApiPublicAmfiNavallRoute = ApiPublicAmfiNavallRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/ai-insights': typeof AiInsightsRoute
   '/backtest': typeof BacktestRoute
   '/compare': typeof CompareRoute
   '/dashboard': typeof DashboardRoute
   '/explorer': typeof ExplorerRoute
   '/portfolio': typeof PortfolioRoute
   '/rankings': typeof RankingsRoute
+  '/research-desk': typeof ResearchDeskRoute
   '/screener': typeof ScreenerRoute
   '/settings': typeof SettingsRoute
   '/fund/$id': typeof FundIdRoute
@@ -113,13 +113,13 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/ai-insights': typeof AiInsightsRoute
   '/backtest': typeof BacktestRoute
   '/compare': typeof CompareRoute
   '/dashboard': typeof DashboardRoute
   '/explorer': typeof ExplorerRoute
   '/portfolio': typeof PortfolioRoute
   '/rankings': typeof RankingsRoute
+  '/research-desk': typeof ResearchDeskRoute
   '/screener': typeof ScreenerRoute
   '/settings': typeof SettingsRoute
   '/fund/$id': typeof FundIdRoute
@@ -130,13 +130,13 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/ai-insights': typeof AiInsightsRoute
   '/backtest': typeof BacktestRoute
   '/compare': typeof CompareRoute
   '/dashboard': typeof DashboardRoute
   '/explorer': typeof ExplorerRoute
   '/portfolio': typeof PortfolioRoute
   '/rankings': typeof RankingsRoute
+  '/research-desk': typeof ResearchDeskRoute
   '/screener': typeof ScreenerRoute
   '/settings': typeof SettingsRoute
   '/fund/$id': typeof FundIdRoute
@@ -148,13 +148,13 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/ai-insights'
     | '/backtest'
     | '/compare'
     | '/dashboard'
     | '/explorer'
     | '/portfolio'
     | '/rankings'
+    | '/research-desk'
     | '/screener'
     | '/settings'
     | '/fund/$id'
@@ -164,13 +164,13 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/ai-insights'
     | '/backtest'
     | '/compare'
     | '/dashboard'
     | '/explorer'
     | '/portfolio'
     | '/rankings'
+    | '/research-desk'
     | '/screener'
     | '/settings'
     | '/fund/$id'
@@ -180,13 +180,13 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
-    | '/ai-insights'
     | '/backtest'
     | '/compare'
     | '/dashboard'
     | '/explorer'
     | '/portfolio'
     | '/rankings'
+    | '/research-desk'
     | '/screener'
     | '/settings'
     | '/fund/$id'
@@ -197,13 +197,13 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AiInsightsRoute: typeof AiInsightsRoute
   BacktestRoute: typeof BacktestRoute
   CompareRoute: typeof CompareRoute
   DashboardRoute: typeof DashboardRoute
   ExplorerRoute: typeof ExplorerRoute
   PortfolioRoute: typeof PortfolioRoute
   RankingsRoute: typeof RankingsRoute
+  ResearchDeskRoute: typeof ResearchDeskRoute
   ScreenerRoute: typeof ScreenerRoute
   SettingsRoute: typeof SettingsRoute
   FundIdRoute: typeof FundIdRoute
@@ -226,6 +226,13 @@ declare module '@tanstack/react-router' {
       path: '/screener'
       fullPath: '/screener'
       preLoaderRoute: typeof ScreenerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/research-desk': {
+      id: '/research-desk'
+      path: '/research-desk'
+      fullPath: '/research-desk'
+      preLoaderRoute: typeof ResearchDeskRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/rankings': {
@@ -270,13 +277,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BacktestRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/ai-insights': {
-      id: '/ai-insights'
-      path: '/ai-insights'
-      fullPath: '/ai-insights'
-      preLoaderRoute: typeof AiInsightsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/': {
       id: '/'
       path: '/'
@@ -317,13 +317,13 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AiInsightsRoute: AiInsightsRoute,
   BacktestRoute: BacktestRoute,
   CompareRoute: CompareRoute,
   DashboardRoute: DashboardRoute,
   ExplorerRoute: ExplorerRoute,
   PortfolioRoute: PortfolioRoute,
   RankingsRoute: RankingsRoute,
+  ResearchDeskRoute: ResearchDeskRoute,
   ScreenerRoute: ScreenerRoute,
   SettingsRoute: SettingsRoute,
   FundIdRoute: FundIdRoute,
