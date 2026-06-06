@@ -3,7 +3,16 @@ import { AppShell } from "@/components/AppShell";
 import { Construction } from "lucide-react";
 
 export const Route = createFileRoute("/portfolio")({
-  head: () => ({ meta: [{ title: "Portfolio Analyzer — QuantFund" }] }),
+  head: () => ({
+    meta: [
+      { title: "Portfolio Analyzer — QuantFund" },
+      { name: "description", content: "Aggregate portfolio analytics: overlap detection, category exposure, diversification score and risk-adjusted returns." },
+      { property: "og:title", content: "Portfolio Analyzer — QuantFund" },
+      { property: "og:description", content: "Analyze your mutual fund portfolio with institutional-grade aggregate metrics." },
+      { property: "og:url", content: "https://mrwhitemf1.lovable.app/portfolio" },
+    ],
+    links: [{ rel: "canonical", href: "https://mrwhitemf1.lovable.app/portfolio" }],
+  }),
   component: Portfolio,
 });
 

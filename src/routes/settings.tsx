@@ -2,7 +2,16 @@ import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 
 export const Route = createFileRoute("/settings")({
-  head: () => ({ meta: [{ title: "Settings — QuantFund" }] }),
+  head: () => ({
+    meta: [
+      { title: "Settings — QuantFund" },
+      { name: "description", content: "Configure default benchmark, rolling window, risk-free rate and data sync preferences for the QuantFund terminal." },
+      { property: "og:title", content: "Settings — QuantFund" },
+      { property: "og:description", content: "Personalize your QuantFund research terminal." },
+      { property: "og:url", content: "https://mrwhitemf1.lovable.app/settings" },
+    ],
+    links: [{ rel: "canonical", href: "https://mrwhitemf1.lovable.app/settings" }],
+  }),
   component: Settings,
 });
 

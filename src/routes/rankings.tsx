@@ -3,7 +3,16 @@ import { AppShell } from "@/components/AppShell";
 import { Construction } from "lucide-react";
 
 export const Route = createFileRoute("/rankings")({
-  head: () => ({ meta: [{ title: "Rankings — QuantFund" }] }),
+  head: () => ({
+    meta: [
+      { title: "Rankings — QuantFund" },
+      { name: "description", content: "Category-scoped mutual fund leaderboards powered by the QuantFund Score — no invalid cross-category comparisons." },
+      { property: "og:title", content: "Rankings — QuantFund" },
+      { property: "og:description", content: "Top Indian mutual funds ranked within each category by QuantFund Score." },
+      { property: "og:url", content: "https://mrwhitemf1.lovable.app/rankings" },
+    ],
+    links: [{ rel: "canonical", href: "https://mrwhitemf1.lovable.app/rankings" }],
+  }),
   component: Rankings,
 });
 

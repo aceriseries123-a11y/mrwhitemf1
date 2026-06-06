@@ -3,7 +3,16 @@ import { AppShell } from "@/components/AppShell";
 import { Construction } from "lucide-react";
 
 export const Route = createFileRoute("/backtest")({
-  head: () => ({ meta: [{ title: "Backtesting — QuantFund" }] }),
+  head: () => ({
+    meta: [
+      { title: "Backtesting — QuantFund" },
+      { name: "description", content: "Simulate mutual fund portfolio performance against benchmark TRI series using historical AMFI NAV data." },
+      { property: "og:title", content: "Backtesting — QuantFund" },
+      { property: "og:description", content: "Portfolio backtests with rolling returns and benchmark TRI comparison." },
+      { property: "og:url", content: "https://mrwhitemf1.lovable.app/backtest" },
+    ],
+    links: [{ rel: "canonical", href: "https://mrwhitemf1.lovable.app/backtest" }],
+  }),
   component: Backtest,
 });
 

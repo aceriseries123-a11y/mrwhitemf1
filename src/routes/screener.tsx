@@ -3,7 +3,16 @@ import { AppShell } from "@/components/AppShell";
 import { Construction } from "lucide-react";
 
 export const Route = createFileRoute("/screener")({
-  head: () => ({ meta: [{ title: "Screener — QuantFund" }] }),
+  head: () => ({
+    meta: [
+      { title: "Screener — QuantFund" },
+      { name: "description", content: "Filter Indian mutual funds by Sharpe ratio, CAGR, maximum drawdown and the QuantFund Score across the full AMFI universe." },
+      { property: "og:title", content: "Screener — QuantFund" },
+      { property: "og:description", content: "Multi-metric mutual fund screener with percentile filters." },
+      { property: "og:url", content: "https://mrwhitemf1.lovable.app/screener" },
+    ],
+    links: [{ rel: "canonical", href: "https://mrwhitemf1.lovable.app/screener" }],
+  }),
   component: Screener,
 });
 

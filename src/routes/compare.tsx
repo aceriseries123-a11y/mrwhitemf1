@@ -3,7 +3,16 @@ import { AppShell } from "@/components/AppShell";
 import { Construction } from "lucide-react";
 
 export const Route = createFileRoute("/compare")({
-  head: () => ({ meta: [{ title: "Fund Compare — QuantFund" }] }),
+  head: () => ({
+    meta: [
+      { title: "Fund Compare — QuantFund" },
+      { name: "description", content: "Side-by-side mutual fund comparison across rolling returns, drawdowns, Sharpe ratio and QuantFund Score." },
+      { property: "og:title", content: "Fund Compare — QuantFund" },
+      { property: "og:description", content: "Compare Indian mutual funds head-to-head on quant-driven metrics." },
+      { property: "og:url", content: "https://mrwhitemf1.lovable.app/compare" },
+    ],
+    links: [{ rel: "canonical", href: "https://mrwhitemf1.lovable.app/compare" }],
+  }),
   component: Compare,
 });
 

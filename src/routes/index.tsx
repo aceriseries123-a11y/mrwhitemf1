@@ -11,10 +11,27 @@ export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "QuantFund — Advanced Quantitative Mutual Fund Research" },
-      { name: "description", content: "Institutional-grade mutual fund analytics: rolling returns, risk-adjusted scoring, drawdowns, portfolio optimization, and AI-powered fund research." },
+      { name: "description", content: "Institutional-grade mutual fund analytics: rolling returns, risk-adjusted scoring, drawdowns, portfolio optimization, and quant-driven fund research." },
       { property: "og:title", content: "QuantFund — Quant Mutual Fund Research" },
       { property: "og:description", content: "Bloomberg-style mutual fund analytics for serious investors." },
+      { property: "og:url", content: "https://mrwhitemf1.lovable.app/" },
     ],
+    links: [{ rel: "canonical", href: "https://mrwhitemf1.lovable.app/" }],
+    scripts: [{
+      type: "application/ld+json",
+      children: JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        name: "QuantFund",
+        url: "https://mrwhitemf1.lovable.app/",
+        description: "Advanced quantitative mutual fund research platform for Indian mutual funds.",
+        publisher: {
+          "@type": "Organization",
+          name: "QuantFund",
+          url: "https://mrwhitemf1.lovable.app/",
+        },
+      }),
+    }],
   }),
   component: Landing,
 });
