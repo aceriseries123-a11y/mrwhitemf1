@@ -63,6 +63,7 @@ function Landing() {
         </div>
       </header>
 
+      <main>
       {/* Hero */}
       <section className="bg-hero relative overflow-hidden">
         <div className="mx-auto max-w-7xl px-4 pb-16 pt-20 md:pt-28">

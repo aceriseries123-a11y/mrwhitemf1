@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ScreenerRouteImport } from './routes/screener'
 import { Route as ResearchDeskRouteImport } from './routes/research-desk'
@@ -24,6 +25,11 @@ import { Route as ApiPublicSchemeAumRouteImport } from './routes/api/public/sche
 import { Route as ApiPublicMarketTicksRouteImport } from './routes/api/public/market-ticks'
 import { Route as ApiPublicAmfiNavallRouteImport } from './routes/api/public/amfi-navall'
 
+const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
+  id: '/sitemap.xml',
+  path: '/sitemap.xml',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -106,6 +112,7 @@ export interface FileRoutesByFullPath {
   '/research-desk': typeof ResearchDeskRoute
   '/screener': typeof ScreenerRoute
   '/settings': typeof SettingsRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
   '/fund/$id': typeof FundIdRoute
   '/api/public/amfi-navall': typeof ApiPublicAmfiNavallRoute
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
@@ -122,6 +129,7 @@ export interface FileRoutesByTo {
   '/research-desk': typeof ResearchDeskRoute
   '/screener': typeof ScreenerRoute
   '/settings': typeof SettingsRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
   '/fund/$id': typeof FundIdRoute
   '/api/public/amfi-navall': typeof ApiPublicAmfiNavallRoute
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
@@ -139,6 +147,7 @@ export interface FileRoutesById {
   '/research-desk': typeof ResearchDeskRoute
   '/screener': typeof ScreenerRoute
   '/settings': typeof SettingsRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
   '/fund/$id': typeof FundIdRoute
   '/api/public/amfi-navall': typeof ApiPublicAmfiNavallRoute
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
@@ -157,6 +166,7 @@ export interface FileRouteTypes {
     | '/research-desk'
     | '/screener'
     | '/settings'
+    | '/sitemap.xml'
     | '/fund/$id'
     | '/api/public/amfi-navall'
     | '/api/public/market-ticks'
@@ -173,6 +183,7 @@ export interface FileRouteTypes {
     | '/research-desk'
     | '/screener'
     | '/settings'
+    | '/sitemap.xml'
     | '/fund/$id'
     | '/api/public/amfi-navall'
     | '/api/public/market-ticks'
@@ -189,6 +200,7 @@ export interface FileRouteTypes {
     | '/research-desk'
     | '/screener'
     | '/settings'
+    | '/sitemap.xml'
     | '/fund/$id'
     | '/api/public/amfi-navall'
     | '/api/public/market-ticks'
@@ -206,6 +218,7 @@ export interface RootRouteChildren {
   ResearchDeskRoute: typeof ResearchDeskRoute
   ScreenerRoute: typeof ScreenerRoute
   SettingsRoute: typeof SettingsRoute
+  SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   FundIdRoute: typeof FundIdRoute
   ApiPublicAmfiNavallRoute: typeof ApiPublicAmfiNavallRoute
   ApiPublicMarketTicksRoute: typeof ApiPublicMarketTicksRoute
@@ -214,6 +227,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/sitemap.xml': {
+      id: '/sitemap.xml'
+      path: '/sitemap.xml'
+      fullPath: '/sitemap.xml'
+      preLoaderRoute: typeof SitemapDotxmlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings': {
       id: '/settings'
       path: '/settings'
@@ -326,6 +346,7 @@ const rootRouteChildren: RootRouteChildren = {
   ResearchDeskRoute: ResearchDeskRoute,
   ScreenerRoute: ScreenerRoute,
   SettingsRoute: SettingsRoute,
+  SitemapDotxmlRoute: SitemapDotxmlRoute,
   FundIdRoute: FundIdRoute,
   ApiPublicAmfiNavallRoute: ApiPublicAmfiNavallRoute,
   ApiPublicMarketTicksRoute: ApiPublicMarketTicksRoute,

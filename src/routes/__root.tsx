@@ -104,6 +104,16 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" },
       { rel: "stylesheet", href: appCss },
     ],
+    scripts: [{
+      type: "application/ld+json",
+      children: JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        name: "QuantFund",
+        url: "https://mrwhitemf1.lovable.app/",
+        description: "Advanced quantitative mutual fund research platform for Indian mutual funds.",
+      }),
+    }],
   }),
   shellComponent: RootShell,
   component: RootComponent,
