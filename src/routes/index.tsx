@@ -177,6 +177,7 @@ function Landing() {
         </Link>
       </section>
 
+      </main>
       <footer className="border-t border-border py-8 text-center text-xs text-muted-foreground">
         © {new Date().getFullYear()} QuantFund · Research platform · For educational use
       </footer>
