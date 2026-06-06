@@ -28,6 +28,16 @@ import { classifyAMFICategory } from "../lib/categories";
 import type { QuantFundCategory } from "../lib/categories";
 
 export const Route = createFileRoute("/dashboard")({
+  head: () => ({
+    meta: [
+      { title: "Dashboard — QuantFund" },
+      { name: "description", content: "Category-scoped top fund rankings powered by the QuantFund Score across the full 4,000+ Indian mutual fund universe." },
+      { property: "og:title", content: "Dashboard — QuantFund" },
+      { property: "og:description", content: "Top-ranked Indian mutual funds by category, scored on rolling returns, drawdowns, and risk-adjusted metrics." },
+      { property: "og:url", content: "https://mrwhitemf1.lovable.app/dashboard" },
+    ],
+    links: [{ rel: "canonical", href: "https://mrwhitemf1.lovable.app/dashboard" }],
+  }),
   component: DashboardPage,
 });
 
@@ -212,8 +222,9 @@ function DashboardPage() {
 
 function InfoTooltip({ text }: { text: string }) {
   return (
-    <div className="relative group">
-      <Info className="h-3.5 w-3.5 text-gray-300 dark:text-gray-600 cursor-help" />
+    <div className="relative group" role="tooltip" aria-label={text}>
+      <Info className="h-3.5 w-3.5 text-gray-300 dark:text-gray-600 cursor-help" aria-hidden="true" />
+      <span className="sr-only">{text}</span>
       <div className="absolute left-0 top-5 z-10 hidden group-hover:block w-56 p-2 text-xs text-white bg-gray-800 rounded shadow-lg">
         {text}
       </div>

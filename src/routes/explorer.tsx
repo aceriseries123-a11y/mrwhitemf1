@@ -6,7 +6,16 @@ import { useAMFISchemes, filterActiveSchemes, type AMFIScheme } from "@/lib/live
 import { classifyAMFICategory, QUANTFUND_CATEGORIES, type QuantFundCategory } from "@/lib/categories";
 
 export const Route = createFileRoute("/explorer")({
-  head: () => ({ meta: [{ title: "Fund Explorer — QuantFund" }] }),
+  head: () => ({
+    meta: [
+      { title: "Fund Explorer — QuantFund" },
+      { name: "description", content: "Search and filter the full Indian mutual fund universe (4,000+ schemes) by AMC, category and NAV." },
+      { property: "og:title", content: "Fund Explorer — QuantFund" },
+      { property: "og:description", content: "Browse every active Indian mutual fund scheme with live AMFI NAV data." },
+      { property: "og:url", content: "https://mrwhitemf1.lovable.app/explorer" },
+    ],
+    links: [{ rel: "canonical", href: "https://mrwhitemf1.lovable.app/explorer" }],
+  }),
   component: Explorer,
 });
 

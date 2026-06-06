@@ -11,10 +11,27 @@ export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "QuantFund — Advanced Quantitative Mutual Fund Research" },
-      { name: "description", content: "Institutional-grade mutual fund analytics: rolling returns, risk-adjusted scoring, drawdowns, portfolio optimization, and AI-powered fund research." },
+      { name: "description", content: "Institutional-grade mutual fund analytics: rolling returns, risk-adjusted scoring, drawdowns, portfolio optimization, and quant-driven fund research." },
       { property: "og:title", content: "QuantFund — Quant Mutual Fund Research" },
       { property: "og:description", content: "Bloomberg-style mutual fund analytics for serious investors." },
+      { property: "og:url", content: "https://mrwhitemf1.lovable.app/" },
     ],
+    links: [{ rel: "canonical", href: "https://mrwhitemf1.lovable.app/" }],
+    scripts: [{
+      type: "application/ld+json",
+      children: JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        name: "QuantFund",
+        url: "https://mrwhitemf1.lovable.app/",
+        description: "Advanced quantitative mutual fund research platform for Indian mutual funds.",
+        publisher: {
+          "@type": "Organization",
+          name: "QuantFund",
+          url: "https://mrwhitemf1.lovable.app/",
+        },
+      }),
+    }],
   }),
   component: Landing,
 });
@@ -46,6 +63,7 @@ function Landing() {
         </div>
       </header>
 
+      <main>
       {/* Hero */}
       <section className="bg-hero relative overflow-hidden">
         <div className="mx-auto max-w-7xl px-4 pb-16 pt-20 md:pt-28">
@@ -159,6 +177,7 @@ function Landing() {
         </Link>
       </section>
 
+      </main>
       <footer className="border-t border-border py-8 text-center text-xs text-muted-foreground">
         © {new Date().getFullYear()} QuantFund · Research platform · For educational use
       </footer>

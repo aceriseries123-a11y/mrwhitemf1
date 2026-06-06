@@ -1,0 +1,21 @@
+# QuantFund
+
+> Advanced quantitative research platform for Indian mutual funds — rolling returns, risk-adjusted scoring, drawdown analytics and portfolio optimization across the full AMFI universe.
+
+QuantFund provides Bloomberg-style mutual fund analytics for serious retail investors. It uses live AMFI NAV data to compute the QuantFund Score, a 9-factor composite that penalises volatility and rewards consistency, and presents category-scoped rankings (no invalid cross-category comparisons).
+
+## Pages
+
+- [Home](/): Landing page with platform overview and methodology.
+- [Dashboard](/dashboard): Category-scoped top fund rankings powered by the QuantFund Score.
+- [Fund Explorer](/explorer): Search and filter all 4,000+ Indian mutual fund schemes.
+- [Fund Compare](/compare): Side-by-side comparison across quant metrics.
+- [Portfolio Analyzer](/portfolio): Aggregate portfolio overlap, exposure and diversification analytics.
+- [Screener](/screener): Multi-metric filter on Sharpe, CAGR, drawdown and QuantFund Score.
+- [Backtesting](/backtest): Simulate portfolio performance against benchmark TRI series.
+- [Research Desk](/research-desk): Roadmap for data-driven research signals.
+- [Rankings](/rankings): Category leaderboards by QuantFund Score.
+
+## Optional
+
+- [Settings](/settings): User preferences for benchmark, rolling window and risk-free rate.

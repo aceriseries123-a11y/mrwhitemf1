@@ -28,6 +28,16 @@ import { FlaskConical, TrendingUp, ShieldCheck, BarChart3 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/research-desk")({
+  head: () => ({
+    meta: [
+      { title: "Research Desk — QuantFund" },
+      { name: "description", content: "Upcoming data-driven research signals: rolling momentum, drawdown alerts, and benchmark capture analytics for Indian mutual funds." },
+      { property: "og:title", content: "Research Desk — QuantFund" },
+      { property: "og:description", content: "Quant-driven mutual fund research signals, currently in development." },
+      { property: "og:url", content: "https://mrwhitemf1.lovable.app/research-desk" },
+    ],
+    links: [{ rel: "canonical", href: "https://mrwhitemf1.lovable.app/research-desk" }],
+  }),
   component: ResearchDeskPage,
 });
 

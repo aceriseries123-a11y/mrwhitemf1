@@ -5,7 +5,28 @@ import { useAMFISchemes } from "@/lib/live-data";
 import { classifyAMFICategory } from "@/lib/categories";
 
 export const Route = createFileRoute("/fund/$id")({
-  head: ({ params }) => ({ meta: [{ title: `Scheme ${params.id} — Fund Details · QuantFund` }] }),
+  head: ({ params }) => ({
+    meta: [
+      { title: `Scheme ${params.id} — Fund Details · QuantFund` },
+      { name: "description", content: `Detailed analytics for AMFI scheme ${params.id}: NAV, category classification, AMC and risk-adjusted performance metrics.` },
+      { property: "og:title", content: `Scheme ${params.id} — QuantFund` },
+      { property: "og:description", content: `Live AMFI data and quant analytics for scheme ${params.id}.` },
+      { property: "og:url", content: `https://mrwhitemf1.lovable.app/fund/${params.id}` },
+      { property: "og:type", content: "article" },
+    ],
+    links: [{ rel: "canonical", href: `https://mrwhitemf1.lovable.app/fund/${params.id}` }],
+    scripts: [{
+      type: "application/ld+json",
+      children: JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "Dataset",
+        name: `AMFI Scheme ${params.id}`,
+        description: `Live NAV and quant analytics for AMFI mutual fund scheme ${params.id}.`,
+        url: `https://mrwhitemf1.lovable.app/fund/${params.id}`,
+        creator: { "@type": "Organization", name: "QuantFund" },
+      }),
+    }],
+  }),
   component: FundPage,
 });
 
