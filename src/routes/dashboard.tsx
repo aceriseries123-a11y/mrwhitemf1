@@ -26,6 +26,7 @@ import { AlertCircle, Loader2, Info } from "lucide-react";
 import { useAMFISchemes, filterActiveSchemes } from "../lib/live-data";
 import { classifyAMFICategory } from "../lib/categories";
 import type { QuantFundCategory } from "../lib/categories";
+import { AppShell } from "@/components/AppShell";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -64,34 +65,37 @@ function DashboardPage() {
   // ── Error state — explicit, no silent degradation ─────────────────────────
   if (isError) {
     return (
-      <div className="container mx-auto max-w-4xl px-4 py-12">
-        <div className="rounded-lg border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30 p-6 flex gap-4">
-          <AlertCircle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
-          <div>
-            <h2 className="font-semibold text-red-800 dark:text-red-300 mb-1">
-              Fund data unavailable
-            </h2>
-            <p className="text-sm text-red-700 dark:text-red-400 mb-2">
-              Rankings cannot be displayed because the AMFI data source is
-              currently unreachable. Please try again in a few minutes.
-            </p>
-            <p className="text-xs text-red-500 dark:text-red-500 font-mono">
-              {(error as Error)?.message ?? "Unknown error"}
-            </p>
+      <AppShell title="Dashboard">
+        <div className="container mx-auto max-w-4xl px-4 py-12">
+          <div className="rounded-lg border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30 p-6 flex gap-4">
+            <AlertCircle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
+            <div>
+              <h2 className="font-semibold text-red-800 dark:text-red-300 mb-1">
+                Fund data unavailable
+              </h2>
+              <p className="text-sm text-red-700 dark:text-red-400 mb-2">
+                Rankings cannot be displayed because the AMFI data source is
+                currently unreachable. Please try again in a few minutes.
+              </p>
+              <p className="text-xs text-red-500 dark:text-red-500 font-mono">
+                {(error as Error)?.message ?? "Unknown error"}
+              </p>
+            </div>
           </div>
         </div>
-        {/* Deliberately show NO fund data — partial/degraded data is worse than none */}
-      </div>
+      </AppShell>
     );
   }
 
   // ── Loading state ─────────────────────────────────────────────────────────
   if (isLoading || !allSchemes) {
     return (
-      <div className="container mx-auto max-w-4xl px-4 py-12 flex flex-col items-center gap-3 text-gray-400">
-        <Loader2 className="h-6 w-6 animate-spin" />
-        <p className="text-sm">Loading AMFI fund universe…</p>
-      </div>
+      <AppShell title="Dashboard">
+        <div className="container mx-auto max-w-4xl px-4 py-12 flex flex-col items-center gap-3 text-gray-400">
+          <Loader2 className="h-6 w-6 animate-spin" />
+          <p className="text-sm">Loading AMFI fund universe…</p>
+        </div>
+      </AppShell>
     );
   }
 
@@ -104,6 +108,7 @@ function DashboardPage() {
   );
 
   return (
+    <AppShell title="Dashboard">
     <div className="container mx-auto max-w-5xl px-4 py-8">
       {/* Page header */}
       <div className="mb-6">
@@ -215,6 +220,7 @@ function DashboardPage() {
         .
       </div>
     </div>
+    </AppShell>
   );
 }
 

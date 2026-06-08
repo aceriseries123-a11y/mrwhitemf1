@@ -26,6 +26,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { FlaskConical, TrendingUp, ShieldCheck, BarChart3 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
+import { AppShell } from "@/components/AppShell";
 
 export const Route = createFileRoute("/research-desk")({
   head: () => ({
@@ -76,6 +77,7 @@ const PLANNED_SIGNALS = [
 
 function ResearchDeskPage() {
   return (
+    <AppShell title="Research Desk">
     <div className="container mx-auto max-w-3xl px-4 py-12">
       {/* Header */}
       <div className="flex items-center gap-3 mb-2">
@@ -159,5 +161,6 @@ function ResearchDeskPage() {
         </p>
       </div>
     </div>
+    </AppShell>
   );
 }
