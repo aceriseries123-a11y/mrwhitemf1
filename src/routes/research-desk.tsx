@@ -77,6 +77,7 @@ const PLANNED_SIGNALS = [
 
 function ResearchDeskPage() {
   return (
+    <AppShell title="Research Desk">
     <div className="container mx-auto max-w-3xl px-4 py-12">
       {/* Header */}
       <div className="flex items-center gap-3 mb-2">
