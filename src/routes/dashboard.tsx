@@ -108,6 +108,7 @@ function DashboardPage() {
   );
 
   return (
+    <AppShell title="Dashboard">
     <div className="container mx-auto max-w-5xl px-4 py-8">
       {/* Page header */}
       <div className="mb-6">
