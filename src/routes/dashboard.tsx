@@ -90,10 +90,12 @@ function DashboardPage() {
   // ── Loading state ─────────────────────────────────────────────────────────
   if (isLoading || !allSchemes) {
     return (
-      <div className="container mx-auto max-w-4xl px-4 py-12 flex flex-col items-center gap-3 text-gray-400">
-        <Loader2 className="h-6 w-6 animate-spin" />
-        <p className="text-sm">Loading AMFI fund universe…</p>
-      </div>
+      <AppShell title="Dashboard">
+        <div className="container mx-auto max-w-4xl px-4 py-12 flex flex-col items-center gap-3 text-gray-400">
+          <Loader2 className="h-6 w-6 animate-spin" />
+          <p className="text-sm">Loading AMFI fund universe…</p>
+        </div>
+      </AppShell>
     );
   }
 
