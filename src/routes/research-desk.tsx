@@ -161,5 +161,6 @@ function ResearchDeskPage() {
         </p>
       </div>
     </div>
+    </AppShell>
   );
 }
