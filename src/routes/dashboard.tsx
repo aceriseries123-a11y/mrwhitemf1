@@ -26,6 +26,7 @@ import { AlertCircle, Loader2, Info } from "lucide-react";
 import { useAMFISchemes, filterActiveSchemes } from "../lib/live-data";
 import { classifyAMFICategory } from "../lib/categories";
 import type { QuantFundCategory } from "../lib/categories";
+import { AppShell } from "@/components/AppShell";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
