@@ -26,6 +26,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { FlaskConical, TrendingUp, ShieldCheck, BarChart3 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
+import { AppShell } from "@/components/AppShell";
 
 export const Route = createFileRoute("/research-desk")({
   head: () => ({
