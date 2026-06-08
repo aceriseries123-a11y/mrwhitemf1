@@ -220,6 +220,7 @@ function DashboardPage() {
         .
       </div>
     </div>
+    </AppShell>
   );
 }
 
