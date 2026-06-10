@@ -79,7 +79,7 @@ function DashboardPage() {
       (s) => classifyAMFICategory(s.category) === activeCategory,
     );
     return inCat
-      .map(scoreScheme)
+      .map((s) => scoreScheme(s, activeCategory))
       .sort((a, b) => b.qfScore - a.qfScore)
       .slice(0, 10);
   }, [activeSchemes, activeCategory]);
