@@ -17,6 +17,7 @@ import { AlertCircle, Loader2, Info } from "lucide-react";
 import { useAMFISchemes, filterActiveSchemes, type AMFIScheme } from "../lib/live-data";
 import { classifyAMFICategory } from "../lib/categories";
 import type { QuantFundCategory } from "../lib/categories";
+import { previewMetrics } from "../lib/synthetic-metrics";
 import { AppShell } from "@/components/AppShell";
 
 export const Route = createFileRoute("/dashboard")({
@@ -51,30 +52,18 @@ const DASHBOARD_CATEGORIES: QuantFundCategory[] = [
   "Short Duration",
 ];
 
-// Deterministic hash → number in [0, 1)
-function hash01(seed: string): number {
-  let h = 2166136261 >>> 0;
-  for (let i = 0; i < seed.length; i++) {
-    h = (h ^ seed.charCodeAt(i)) * 16777619;
-    h = h >>> 0;
-  }
-  return (h % 100000) / 100000;
-}
-
 interface ScoredScheme extends AMFIScheme {
-  qfScore: number; // 0-100
-  ret1Y: number; // percentage
+  qfScore: number;
+  ret1Y: number;
+  sharpe: number;
+  maxDrawdown: number;
 }
 
-function scoreScheme(s: AMFIScheme): ScoredScheme {
-  const r = hash01(String(s.schemeCode));
-  const r2 = hash01(s.schemeCode + "x");
-  return {
-    ...s,
-    qfScore: 60 + r * 39.9, // 60 - 99.9
-    ret1Y: -5 + r2 * 45, // -5% to +40%
-  };
+function scoreScheme(s: AMFIScheme, cat: QuantFundCategory): ScoredScheme {
+  const m = previewMetrics(s, cat);
+  return { ...s, qfScore: m.qfScore, ret1Y: m.ret1Y, sharpe: m.sharpe, maxDrawdown: m.maxDrawdown };
 }
+
 
 function DashboardPage() {
   const { data: allSchemes, isLoading, isError, error } = useAMFISchemes();
@@ -90,7 +79,7 @@ function DashboardPage() {
       (s) => classifyAMFICategory(s.category) === activeCategory,
     );
     return inCat
-      .map(scoreScheme)
+      .map((s) => scoreScheme(s, activeCategory))
       .sort((a, b) => b.qfScore - a.qfScore)
       .slice(0, 10);
   }, [activeSchemes, activeCategory]);
