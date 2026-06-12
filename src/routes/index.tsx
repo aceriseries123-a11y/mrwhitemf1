@@ -70,13 +70,13 @@ function Landing() {
           <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
             <div className="inline-flex items-center gap-2 rounded-full border border-border bg-surface/60 px-3 py-1 text-xs text-muted-foreground">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-positive" />
-              Live · 4,128 schemes · 20Y historical NAV
+              Live data from AMFI · Full open-ended scheme universe
             </div>
             <h1 className="mt-6 max-w-4xl font-display text-4xl font-bold leading-[1.05] tracking-tight md:text-6xl">
               Advanced quantitative <span className="bg-gradient-to-r from-primary via-cyan to-primary bg-clip-text text-transparent">mutual fund</span> research platform.
             </h1>
             <p className="mt-5 max-w-2xl text-base text-muted-foreground md:text-lg">
-              Professional rolling return analysis, risk-adjusted scoring, drawdown analytics, portfolio optimization, and AI-powered fund research — built for serious investors.
+              Trailing returns, drawdowns, Sharpe and Sortino — every number is computed from real AMFI NAV history. No synthetic scores, no fabricated benchmarks.
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
               <Link to="/dashboard" className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-br from-primary to-cyan px-5 py-3 text-sm font-semibold text-primary-foreground shadow-glow">
@@ -96,12 +96,15 @@ function Landing() {
               <span className="h-2 w-2 rounded-full bg-warning/70" />
               <span className="h-2 w-2 rounded-full bg-positive/70" />
               <span className="ml-3 font-mono">quantfund / dashboard / overview</span>
-              <span className="ml-auto font-mono">NIFTY 50 · 24,612.40 <span className="text-positive">+0.42%</span></span>
+              <span className="ml-auto font-mono text-muted-foreground">Sample preview · Open dashboard for live data</span>
             </div>
             <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-3">
               <HeroChart />
               <RollingHeatmap />
               <TopRanked />
+            </div>
+            <div className="border-t border-border bg-background/40 px-4 py-2 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+              Preview only · illustrative shapes, not real fund data
             </div>
           </motion.div>
         </div>

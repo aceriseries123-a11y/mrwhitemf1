@@ -46,8 +46,8 @@ export function AppShell({ children, title }: { children: ReactNode; title?: str
           })}
         </nav>
         <div className="absolute inset-x-3 bottom-3 rounded-xl border border-border bg-card/60 p-3 text-xs">
-          <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">Data status</div>
-          <div className="flex items-center gap-2"><span className="h-2 w-2 animate-pulse rounded-full bg-positive" /> Live · 4,128 schemes</div>
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">Data source</div>
+          <div className="flex items-center gap-2"><span className="h-2 w-2 animate-pulse rounded-full bg-positive" /> AMFI · mfapi.in</div>
         </div>
       </aside>
 
@@ -57,12 +57,10 @@ export function AppShell({ children, title }: { children: ReactNode; title?: str
           <button className="lg:hidden" onClick={() => setOpen(true)} aria-label="Open navigation menu"><Menu className="h-5 w-5"/></button>
           <h1 className="font-display text-sm font-semibold">{pageTitle}</h1>
           <div className="ml-auto hidden items-center gap-2 md:flex">
-            <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted-foreground">
-              <Search className="h-3.5 w-3.5" />
-              <label htmlFor="appshell-search" className="sr-only">Search schemes</label>
-              <input id="appshell-search" placeholder="Search 4,128 schemes…" className="w-72 bg-transparent outline-none placeholder:text-muted-foreground" />
+            <Link to="/explorer" className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">
+              <Search className="h-3.5 w-3.5" /> Search schemes
               <kbd className="rounded border border-border px-1 font-mono text-[10px]">⌘K</kbd>
-            </div>
+            </Link>
           </div>
           <button className="grid h-8 w-8 place-items-center rounded-lg border border-border bg-surface" aria-label="Notifications"><Bell className="h-4 w-4"/></button>
           <div className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-primary to-cyan font-mono text-xs font-bold text-primary-foreground" aria-hidden="true">QF</div>
