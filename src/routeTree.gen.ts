@@ -24,6 +24,7 @@ import { Route as FundIdRouteImport } from './routes/fund.$id'
 import { Route as ApiPublicSchemeAumRouteImport } from './routes/api/public/scheme-aum'
 import { Route as ApiPublicMarketTicksRouteImport } from './routes/api/public/market-ticks'
 import { Route as ApiPublicAmfiNavallRouteImport } from './routes/api/public/amfi-navall'
+import { Route as ApiPublicNavBatchRouteImport } from './routes/api/public/nav-batch'
 
 const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
   id: '/sitemap.xml',
@@ -100,6 +101,11 @@ const ApiPublicAmfiNavallRoute = ApiPublicAmfiNavallRouteImport.update({
   path: '/api/public/amfi-navall',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicNavBatchRoute = ApiPublicNavBatchRouteImport.update({
+  id: '/api/public/nav-batch',
+  path: '/api/public/nav-batch',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -117,6 +123,7 @@ export interface FileRoutesByFullPath {
   '/api/public/amfi-navall': typeof ApiPublicAmfiNavallRoute
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
   '/api/public/scheme-aum': typeof ApiPublicSchemeAumRoute
+  '/api/public/nav-batch': typeof ApiPublicNavBatchRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -134,6 +141,7 @@ export interface FileRoutesByTo {
   '/api/public/amfi-navall': typeof ApiPublicAmfiNavallRoute
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
   '/api/public/scheme-aum': typeof ApiPublicSchemeAumRoute
+  '/api/public/nav-batch': typeof ApiPublicNavBatchRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -152,6 +160,7 @@ export interface FileRoutesById {
   '/api/public/amfi-navall': typeof ApiPublicAmfiNavallRoute
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
   '/api/public/scheme-aum': typeof ApiPublicSchemeAumRoute
+  '/api/public/nav-batch': typeof ApiPublicNavBatchRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -171,6 +180,7 @@ export interface FileRouteTypes {
     | '/api/public/amfi-navall'
     | '/api/public/market-ticks'
     | '/api/public/scheme-aum'
+    | '/api/public/nav-batch'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -188,6 +198,7 @@ export interface FileRouteTypes {
     | '/api/public/amfi-navall'
     | '/api/public/market-ticks'
     | '/api/public/scheme-aum'
+    | '/api/public/nav-batch'
   id:
     | '__root__'
     | '/'
@@ -205,6 +216,7 @@ export interface FileRouteTypes {
     | '/api/public/amfi-navall'
     | '/api/public/market-ticks'
     | '/api/public/scheme-aum'
+    | '/api/public/nav-batch'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -223,6 +235,7 @@ export interface RootRouteChildren {
   ApiPublicAmfiNavallRoute: typeof ApiPublicAmfiNavallRoute
   ApiPublicMarketTicksRoute: typeof ApiPublicMarketTicksRoute
   ApiPublicSchemeAumRoute: typeof ApiPublicSchemeAumRoute
+  ApiPublicNavBatchRoute: typeof ApiPublicNavBatchRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -332,6 +345,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicAmfiNavallRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/nav-batch': {
+      id: '/api/public/nav-batch'
+      path: '/api/public/nav-batch'
+      fullPath: '/api/public/nav-batch'
+      preLoaderRoute: typeof ApiPublicNavBatchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -351,6 +371,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicAmfiNavallRoute: ApiPublicAmfiNavallRoute,
   ApiPublicMarketTicksRoute: ApiPublicMarketTicksRoute,
   ApiPublicSchemeAumRoute: ApiPublicSchemeAumRoute,
+  ApiPublicNavBatchRoute: ApiPublicNavBatchRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
