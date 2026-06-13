@@ -25,13 +25,15 @@ const KEY_PREFIX = "qf-engine-v1-";
 export function loadEngineCache(): Map<string, EngineMetrics> {
   const map = new Map<string, EngineMetrics>();
   try {
-    // Clean up yesterday's keys
+    // FIX: collect stale keys first, then delete — removing during index-based
+    // iteration shifts indices and silently skips entries.
+    const staleKeys: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k?.startsWith(KEY_PREFIX) && k !== KEY) {
-        localStorage.removeItem(k);
-      }
+      if (k?.startsWith(KEY_PREFIX) && k !== KEY) staleKeys.push(k);
     }
+    for (const k of staleKeys) localStorage.removeItem(k);
+
     const raw = localStorage.getItem(KEY);
     if (!raw) return map;
     const obj = JSON.parse(raw) as Record<string, EngineMetrics>;
