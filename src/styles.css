@@ -158,6 +158,12 @@
   .bg-positive { background-color: var(--positive); }
   .bg-negative { background-color: var(--negative); }
   .ring-glow { box-shadow: var(--shadow-glow); }
+  .shadow-glow { box-shadow: var(--shadow-glow); }
+  .no-scrollbar { scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .text-warning { color: var(--warning); }
+  .bg-warning { background-color: var(--warning); }
+  .border-warning { border-color: var(--warning); }
 }
 
 html { scroll-behavior: smooth; }
