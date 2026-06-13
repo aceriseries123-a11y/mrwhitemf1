@@ -14,7 +14,7 @@
  */
 
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useRef, useState, useEffect } from "react";
+import { useMemo, useRef, useState, useEffect, useTransition } from "react";
 import { useQueries } from "@tanstack/react-query";
 import {
   AlertCircle, Loader2, Info, TrendingUp, Layers,
@@ -32,7 +32,7 @@ import {
 import { fmtPct, fmtNum } from "../lib/format";
 import { AppShell } from "@/components/AppShell";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
-import { storeSeries } from "../lib/fund-store";
+import { storeSeries, setFullRankedList, type RankedFund } from "../lib/fund-store";
 import { computeEngineMetrics, buildBenchmark, type EngineMetrics } from "../lib/scoring-engine";
 import { saveEngineCache, loadEngineCache } from "../lib/engine-cache";
 
@@ -189,6 +189,7 @@ function ProgressBar({
 function DashboardPage() {
   const { data: allSchemes, isLoading, isError, error } = useAMFISchemes();
   const [activeCategory, setActiveCategory] = useState<QuantFundCategory>("Large Cap");
+  const [catPending, startCatTransition] = useTransition();
 
   // Per-fund metric cache — avoids recomputing on every render as pool grows.
   const overallMetricCache = useRef<Map<string, CachedMetrics>>(new Map());
@@ -349,8 +350,9 @@ function DashboardPage() {
     setTimeout(processNextCategory, 1000);
   }, [overallDone]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Progressively ranked from any combination of cached + freshly loaded metrics
-  const overallRanked = useMemo((): ScoredOverall[] => {
+  // Progressively scored full pool — returns ALL funds, not just top 10.
+  // Rankings reads this from fund-store (set in the useEffect below) instantly.
+  const overallAllScored = useMemo((): ScoredOverall[] => {
     const pool: ScoredOverall[] = [];
 
     for (const s of overallCandidates) {
@@ -372,8 +374,29 @@ function DashboardPage() {
       advScore: advancedPoolScore(f, pool),
     }));
     scored.sort((a, b) => (b.advScore ?? -1) - (a.advScore ?? -1));
-    return scored.slice(0, TOP_N);
+    return scored; // full list — Rankings reads all of this
   }, [overallCandidates, freshNavMap]);
+
+  // Dashboard Table 1 shows top 10 only
+  const overallRanked = useMemo(() => overallAllScored.slice(0, TOP_N), [overallAllScored]);
+
+  // Push full scored list to fund-store as it grows so Rankings reads instantly
+  useEffect(() => {
+    if (overallAllScored.length === 0) return;
+    setFullRankedList(
+      overallAllScored.map((f): RankedFund => ({
+        schemeCode:   f.scheme.schemeCode,
+        schemeName:   f.scheme.schemeName,
+        amc:          f.scheme.amc,
+        nav:          f.scheme.nav,
+        category:     f.scheme.category,
+        poolCategory: f.scheme.poolCategory,
+        advScore:     f.advScore,
+        metrics:      f.metrics,
+        calmar:       f.calmar,
+      })),
+    );
+  }, [overallAllScored]);
 
   // ── Category pool — reads directly from Table 1's cache ─────────────────
   // NO separate useQueries. Table 1 already fetched and computed metrics for
@@ -680,12 +703,12 @@ function DashboardPage() {
               ).length;
               if (count === 0) return null;
               return (
-                <button key={cat} onClick={() => setActiveCategory(cat)}
+                <button key={cat} onClick={() => startCatTransition(() => setActiveCategory(cat))}
                   className={`shrink-0 rounded-lg px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-widest transition-all duration-150 ${
                     cat === activeCategory
                       ? "bg-cyan text-background shadow-[0_0_14px_rgba(34,211,238,0.3)]"
                       : "border border-border bg-surface text-muted-foreground hover:border-cyan/40 hover:text-foreground"
-                  }`}>
+                  } ${catPending && cat !== activeCategory ? "opacity-60" : ""}`}>
                   {cat}
                   <span className="ml-1.5 opacity-50">({count})</span>
                 </button>
