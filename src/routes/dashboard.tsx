@@ -94,8 +94,11 @@ interface ScoredOverall extends CachedMetrics {
   advScore: number | null;
 }
 
+/** "growth" = scheme name contains "Growth"; "other" = IDCW/Reinvestment/etc. */
+type PlanBadge = "growth" | "other";
+
 interface CatRow extends AMFIScheme {
-  isDirect: boolean;
+  badge: PlanBadge;
   score: number | null;
   ret1y: number | null;
   cagr3y: number | null;
@@ -104,6 +107,11 @@ interface CatRow extends AMFIScheme {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Derive plan badge from scheme name. */
+function planBadge(name: string): PlanBadge {
+  return /growth/i.test(name) ? "growth" : "other";
+}
 
 function tone(v: number | null): string {
   if (v == null) return "text-muted-foreground";
@@ -189,11 +197,9 @@ function DashboardPage() {
       const inCat = activeSchemes.filter(
         (s) => classifyAMFICategory(s.category) === category,
       );
-      // Prefer Direct-Growth; fall back to all Growth if < 3 direct exist
+      // Overall pool: strict Direct-Growth only (no IDCW, no Regular)
       const directGrowth = inCat.filter(
-        (s) =>
-          /direct/i.test(s.schemeName) &&
-          (/growth/i.test(s.schemeName) || /idcw.*reinvest/i.test(s.schemeName)),
+        (s) => /direct/i.test(s.schemeName) && /growth/i.test(s.schemeName),
       );
       const pool = directGrowth.length >= 3 ? directGrowth : inCat;
       return pool.map((s) => ({ ...s, poolCategory: category }));
@@ -246,20 +252,16 @@ function DashboardPage() {
   }, [overallCandidates, overallNavQ]);
 
   // ── Category pool ────────────────────────────────────────────────────────
-  // ALL active Growth plans (Direct + Regular) in the selected category.
-  // No count cap. Direct plans are badged in the table.
+  // ALL Direct plans in the selected category — Growth AND IDCW/Other.
+  // Regular plans are excluded. Badge colours distinguish Growth (green) from Other (red).
 
   const catCandidates = useMemo((): AMFIScheme[] => {
     const inCat = activeSchemes.filter(
       (s) => classifyAMFICategory(s.category) === activeCategory,
     );
-    // Prefer growth-only plans; fall back to all if very few
-    const growth = inCat.filter(
-      (s) =>
-        /growth/i.test(s.schemeName) ||
-        /idcw.*reinvest/i.test(s.schemeName),
-    );
-    return growth.length >= 3 ? growth : inCat;
+    // Direct plans only — include all plan types (Growth + IDCW + Reinvestment)
+    const direct = inCat.filter((s) => /direct/i.test(s.schemeName));
+    return direct.length >= 3 ? direct : inCat;
   }, [activeSchemes, activeCategory]);
 
   // Reset category metric cache when category changes
@@ -287,10 +289,10 @@ function DashboardPage() {
 
   const catRanked = useMemo((): CatRow[] => {
     const rows: CatRow[] = catCandidates.map((s, i) => {
-      const isDirect = /direct/i.test(s.schemeName);
-      const history  = catNavQ[i]?.data;
+      const badge   = planBadge(s.schemeName);
+      const history = catNavQ[i]?.data;
       if (!history) {
-        return { ...s, isDirect, score: null, ret1y: null, cagr3y: null, sharpe: null, maxDD: null };
+        return { ...s, badge, score: null, ret1y: null, cagr3y: null, sharpe: null, maxDD: null };
       }
 
       let cached = catMetricCache.current.get(s.schemeCode);
@@ -303,7 +305,7 @@ function DashboardPage() {
       const m = cached.metrics;
       return {
         ...s,
-        isDirect,
+        badge,
         score:  quantFundScore(m),
         ret1y:  m.ret1y,
         cagr3y: m.cagr3y,
@@ -659,11 +661,13 @@ function DashboardPage() {
                                 <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
                                   {s.amc} · ₹{s.nav.toFixed(2)}
                                 </span>
-                                {s.isDirect && (
-                                  <span className="rounded bg-cyan/10 px-1 py-0.5 font-mono text-[8px] uppercase tracking-wider text-cyan">
-                                    Direct
-                                  </span>
-                                )}
+                                <span className={`rounded px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wider ${
+                                  s.badge === "growth"
+                                    ? "bg-positive/15 text-positive"
+                                    : "bg-negative/15 text-negative"
+                                }`}>
+                                  {s.badge === "growth" ? "Growth" : "Other"}
+                                </span>
                               </div>
                             </div>
                           </td>
