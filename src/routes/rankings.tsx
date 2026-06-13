@@ -1,16 +1,7 @@
-/**
- * rankings.tsx — Category-scoped fund leaderboards.
- *
- * Rankings are ALWAYS within a single category. Cross-category comparison
- * is invalid (equity vs debt have completely different return/risk profiles).
- *
- * Data: AMFI NAVAll → real scheme codes → mfapi.in NAV history → computed metrics.
- */
-
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
-import { AlertCircle, Loader2, Info, Trophy } from "lucide-react";
+import { AlertCircle, Loader2, Info, Trophy, CheckCircle2 } from "lucide-react";
 import { useAMFISchemes, filterActiveSchemes, type AMFIScheme } from "@/lib/live-data";
 import { classifyAMFICategory, type QuantFundCategory } from "@/lib/categories";
 import { fetchNavHistory } from "@/lib/nav-history";
@@ -57,6 +48,27 @@ const CATEGORIES_BY_BROAD: Record<BroadTab, QuantFundCategory[]> = {
 
 const TOP_N = 25;
 
+type Row = AMFIScheme & {
+  score: number | null; ret1y: number | null; cagr3y: number | null;
+  sharpe: number | null; maxDD: number | null;
+};
+
+function tone(v: number | null): string {
+  if (v == null) return "text-muted-foreground";
+  return v >= 0 ? "text-positive" : "text-negative";
+}
+
+function InfoTooltip({ text }: { text: string }) {
+  return (
+    <span className="group/tip relative ml-1" role="tooltip" aria-label={text}>
+      <Info className="h-3 w-3 cursor-help text-muted-foreground" aria-hidden="true" />
+      <span className="pointer-events-none absolute right-0 top-4 z-20 hidden w-60 rounded-xl border border-border bg-surface p-2.5 text-[10px] normal-case tracking-normal text-foreground shadow-xl group-hover/tip:block">
+        {text}
+      </span>
+    </span>
+  );
+}
+
 function Rankings() {
   const { data: allSchemes, isLoading, isError, error } = useAMFISchemes();
   const [activeTab, setActiveTab] = useState<BroadTab>("Equity");
@@ -87,11 +99,7 @@ function Rankings() {
 
   const navLoaded = navQueries.filter((q) => q.data).length;
   const navTotal = navQueries.length;
-
-  type Row = AMFIScheme & {
-    score: number | null; ret1y: number | null; cagr3y: number | null;
-    sharpe: number | null; maxDD: number | null;
-  };
+  const allReady = navLoaded === navTotal && navTotal > 0;
 
   const ranked = useMemo((): Row[] => {
     const rows: Row[] = candidates.map((s, i) => {
@@ -112,11 +120,11 @@ function Rankings() {
   if (isError) {
     return (
       <AppShell title="Rankings">
-        <div className="flex gap-4 rounded-sm border border-negative/40 bg-negative/10 p-6">
+        <div className="flex items-start gap-4 rounded-xl border border-negative/40 bg-negative/10 p-6">
           <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-negative" />
           <div>
             <p className="mb-1 font-display text-sm font-semibold uppercase tracking-widest text-negative">Fund data unavailable</p>
-            <p className="text-xs text-muted-foreground">{(error as Error)?.message ?? "Unknown error"}</p>
+            <p className="text-sm text-muted-foreground">{(error as Error)?.message ?? "Unknown error"}</p>
           </div>
         </div>
       </AppShell>
@@ -138,8 +146,10 @@ function Rankings() {
 
   return (
     <AppShell title="Rankings">
-      <div className="mx-auto max-w-5xl">
-        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+      <div className="mx-auto max-w-5xl space-y-4">
+
+        {/* Header */}
+        <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
               <Trophy className="h-5 w-5 text-cyan" />
@@ -149,21 +159,28 @@ function Rankings() {
               Category-scoped leaderboards · {activeSchemes.length.toLocaleString()} open-ended schemes
             </p>
           </div>
-          <DataSourceBadge source="AMFI + mfapi.in" asOf={asOf} note="Rankings are always within-category. Cross-category scores are not comparable." />
+          <DataSourceBadge source="AMFI + mfapi.in" asOf={asOf}
+            note="Rankings are always within-category. Cross-category scores are not comparable." />
         </div>
 
-        {/* Notice */}
-        <div className="mb-4 rounded-sm border border-border bg-surface/60 px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-          <span className="text-cyan">QuantFund Score</span> · Composite: CAGR3Y (35%) · Sharpe (25%) · Drawdown (20%) · Rolling Consistency (20%) · All real NAV history · Not AI
+        {/* Score formula strip */}
+        <div className="rounded-xl border border-border bg-surface/60 px-4 py-2.5">
+          <p className="font-mono text-[10px] text-muted-foreground">
+            <span className="text-cyan font-bold">QuantFund Score</span>
+            {" "}— CAGR3Y <span className="text-foreground">35%</span> · Sharpe{" "}
+            <span className="text-foreground">25%</span> · Max Drawdown{" "}
+            <span className="text-foreground">20%</span> · Rolling Consistency{" "}
+            <span className="text-foreground">20%</span> · Real NAV history · Not AI
+          </p>
         </div>
 
-        {/* Broad category tabs */}
-        <div className="no-scrollbar mb-4 flex gap-1 overflow-x-auto pb-1">
+        {/* Broad tabs */}
+        <div className="no-scrollbar flex gap-1.5 overflow-x-auto pb-0.5">
           {BROAD_TABS.map((tab) => (
             <button key={tab} onClick={() => handleTabChange(tab)}
-              className={`shrink-0 rounded-sm px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-widest transition-colors ${
+              className={`shrink-0 rounded-lg px-4 py-2 font-mono text-[10px] font-bold uppercase tracking-widest transition-all duration-150 ${
                 activeTab === tab
-                  ? "bg-primary text-primary-foreground shadow-glow"
+                  ? "bg-primary text-primary-foreground"
                   : "border border-border bg-surface text-muted-foreground hover:border-primary/40 hover:text-foreground"
               }`}>
               {tab}
@@ -172,127 +189,126 @@ function Rankings() {
         </div>
 
         {/* Sub-category pills */}
-        <div className="no-scrollbar mb-6 flex gap-2 overflow-x-auto pb-1">
+        <div className="no-scrollbar flex gap-2 overflow-x-auto pb-0.5">
           {CATEGORIES_BY_BROAD[activeTab].map((cat) => {
             const count = activeSchemes.filter((s) => classifyAMFICategory(s.category) === cat).length;
             return (
               <button key={cat} onClick={() => setActiveCategory(cat)}
-                className={`shrink-0 rounded-sm px-3 py-1 font-mono text-[9px] font-bold uppercase tracking-widest transition-colors ${
+                className={`shrink-0 rounded-lg px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-widest transition-all duration-150 ${
                   cat === activeCategory
-                    ? "bg-cyan text-background shadow-[0_0_10px_rgba(34,211,238,0.25)]"
+                    ? "bg-cyan text-background shadow-[0_0_12px_rgba(34,211,238,0.25)]"
                     : "border border-border bg-surface text-muted-foreground hover:border-cyan/40 hover:text-foreground"
                 }`}>
-                {cat} <span className="opacity-60">({count})</span>
+                {cat}
+                <span className="ml-1.5 opacity-50">({count})</span>
               </button>
             );
           })}
         </div>
 
-        {/* Ranked table */}
-        <div className="overflow-hidden rounded-sm border border-border bg-surface shadow-2xl">
-          <div className="flex items-center justify-between border-b border-border bg-background/60 p-3">
-            <span className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-cyan">
+        {/* Table */}
+        <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-2xl">
+          <div className="flex items-center justify-between border-b border-border bg-background/60 px-4 py-3">
+            <span className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-cyan">
               Top Ranked — {activeCategory}
             </span>
-            <span className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
-              {navLoaded === navTotal && navTotal > 0 ? `${navLoaded} scored` : `Scoring ${navLoaded}/${navTotal}`}
+            <span className="flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
+              {allReady ? (
+                <><CheckCircle2 className="h-3 w-3 text-positive" />{navLoaded} scored</>
+              ) : (
+                <><Loader2 className="h-3 w-3 animate-spin" />Scoring {navLoaded}/{navTotal}</>
+              )}
               <InfoTooltip text={`Top ${TOP_N} Direct-Growth schemes scored from real NAV history. Cached 12h per fund.`} />
             </span>
           </div>
 
           {candidates.length === 0 ? (
-            <div className="py-10 text-center font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
+            <div className="py-16 text-center font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
               No schemes in {activeCategory}
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b border-border bg-background/40 font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
+                <thead className="sticky top-0 z-10">
+                  <tr className="border-b border-border bg-background/90 font-mono text-[9px] uppercase tracking-widest text-muted-foreground backdrop-blur">
                     <th className="p-3 font-medium">Rk</th>
                     <th className="p-3 font-medium">Scheme</th>
                     <th className="p-3 text-right font-medium">Score</th>
-                    <th className="p-3 text-right font-medium">1Y</th>
+                    <th className="p-3 text-right font-medium">1Y Ret</th>
                     <th className="p-3 text-right font-medium">3Y CAGR</th>
                     <th className="p-3 text-right font-medium">Sharpe</th>
                     <th className="p-3 text-right font-medium">Max DD</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-border">
-                  {ranked.map((s, idx) => (
-                    <tr key={s.schemeCode} className={`group transition-colors hover:bg-cyan/[0.04] ${idx < 3 ? "bg-cyan/[0.02]" : ""}`}>
-                      <td className="p-3 font-mono text-[11px] font-bold tabular-nums text-muted-foreground">
-                        <span className={idx < 3 ? "text-cyan" : ""}>{String(idx + 1).padStart(2, "0")}</span>
-                      </td>
-                      <td className="p-3">
-                        <Link to="/fund/$id" params={{ id: s.schemeCode }}
-                          className="text-[12px] font-semibold leading-tight text-foreground hover:text-cyan">
-                          {s.schemeName}
-                        </Link>
-                        <div className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-                          {s.amc} · #{s.schemeCode} · NAV ₹{s.nav.toFixed(2)}
-                        </div>
-                      </td>
-                      <td className="p-3 text-right">
-                        {s.score != null ? (
-                          <div className="inline-flex flex-col items-end">
-                            <span className="font-mono text-[11px] font-bold tabular-nums text-cyan">{fmtNum(s.score, 1)}</span>
-                            <div className="mt-0.5 h-1 w-10 overflow-hidden rounded-full bg-border">
-                              <div className="h-full bg-cyan" style={{ width: `${Math.min(100, s.score)}%` }} />
-                            </div>
+                <tbody className="divide-y divide-border/60">
+                  {ranked.map((s, idx) => {
+                    const isTop3 = idx < 3;
+                    return (
+                      <tr key={s.schemeCode}
+                        className={`group transition-colors hover:bg-cyan/[0.05] ${isTop3 ? "bg-cyan/[0.02]" : ""}`}>
+                        <td className="p-3 font-mono text-[11px] font-bold tabular-nums">
+                          <span className={isTop3 ? "text-cyan" : "text-muted-foreground"}>
+                            {String(idx + 1).padStart(2, "0")}
+                          </span>
+                        </td>
+                        <td className="p-3">
+                          <Link to="/fund/$id" params={{ id: s.schemeCode }}
+                            className="text-[12px] font-semibold leading-tight text-foreground transition-colors hover:text-cyan">
+                            {s.schemeName}
+                          </Link>
+                          <div className="mt-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                            {s.amc} · #{s.schemeCode} · NAV ₹{s.nav.toFixed(2)}
                           </div>
-                        ) : navQueries[idx]?.isLoading ? (
-                          <Loader2 className="ml-auto h-3 w-3 animate-spin text-muted-foreground" />
-                        ) : (
-                          <span className="font-mono text-[10px] text-muted-foreground">—</span>
-                        )}
-                      </td>
-                      <td className={`p-3 text-right font-mono text-[11px] font-bold tabular-nums ${tone(s.ret1y)}`}>
-                        {fmtPct(s.ret1y, { signed: true })}
-                      </td>
-                      <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(s.cagr3y)}`}>
-                        {fmtPct(s.cagr3y, { signed: true })}
-                      </td>
-                      <td className="p-3 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
-                        {fmtNum(s.sharpe, 2)}
-                      </td>
-                      <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(s.maxDD)}`}>
-                        {fmtPct(s.maxDD, { signed: true })}
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="p-3 text-right">
+                          {s.score != null ? (
+                            <div className="inline-flex flex-col items-end gap-1">
+                              <span className="font-mono text-[12px] font-bold tabular-nums text-cyan">
+                                {fmtNum(s.score, 1)}
+                              </span>
+                              <div className="h-1 w-12 overflow-hidden rounded-full bg-border">
+                                <div className="h-full rounded-full bg-cyan transition-all duration-500"
+                                  style={{ width: `${Math.min(100, s.score)}%` }} />
+                              </div>
+                            </div>
+                          ) : navQueries[idx]?.isLoading ? (
+                            <Loader2 className="ml-auto h-3 w-3 animate-spin text-muted-foreground" />
+                          ) : (
+                            <span className="font-mono text-[10px] text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className={`p-3 text-right font-mono text-[11px] font-bold tabular-nums ${tone(s.ret1y)}`}>
+                          {fmtPct(s.ret1y, { signed: true })}
+                        </td>
+                        <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(s.cagr3y)}`}>
+                          {fmtPct(s.cagr3y, { signed: true })}
+                        </td>
+                        <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(s.sharpe)}`}>
+                          {fmtNum(s.sharpe, 2)}
+                        </td>
+                        <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(s.maxDD)}`}>
+                          {fmtPct(s.maxDD, { signed: true })}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           )}
         </div>
 
-        <p className="mt-4 text-[10px] leading-relaxed text-muted-foreground">
-          Rankings are always within the selected category. Cross-category comparison is invalid — equity and debt funds
-          operate under fundamentally different return and risk profiles. Scores computed from real NAV history via{" "}
+        <p className="text-[10px] leading-relaxed text-muted-foreground">
+          Rankings are always within the selected category. Cross-category comparison is invalid — equity and debt
+          funds operate under fundamentally different return and risk profiles.
+          Top {TOP_N} Direct-Growth schemes per category are scored from real AMFI NAV history.
+          Data: {" "}
           <a href="https://www.amfiindia.com" target="_blank" rel="noopener noreferrer" className="text-cyan underline underline-offset-2">AMFI</a>
-          {" "}and{" "}
+          {" "}&{" "}
           <a href="https://www.mfapi.in" target="_blank" rel="noopener noreferrer" className="text-cyan underline underline-offset-2">mfapi.in</a>.
-          {" "}Top {TOP_N} Direct-Growth schemes per category are scored. Fewer may appear if the category is small.
-          Data last updated: {asOf ?? "—"}.
+          Last updated: {asOf ?? "—"}.
         </p>
       </div>
     </AppShell>
-  );
-}
-
-function tone(v: number | null): string {
-  if (v == null) return "text-muted-foreground";
-  return v >= 0 ? "text-positive" : "text-negative";
-}
-
-function InfoTooltip({ text }: { text: string }) {
-  return (
-    <span className="group relative" role="tooltip" aria-label={text}>
-      <Info className="h-3 w-3 cursor-help text-muted-foreground" aria-hidden="true" />
-      <span className="pointer-events-none absolute right-0 top-4 z-10 hidden w-56 rounded border border-border bg-surface p-2 text-[10px] normal-case tracking-normal text-foreground shadow-lg group-hover:block">
-        {text}
-      </span>
-    </span>
   );
 }
