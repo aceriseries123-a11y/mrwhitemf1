@@ -24,7 +24,7 @@ import { useAMFISchemes, filterActiveSchemes, type AMFIScheme } from "../lib/liv
 import {
   classifyAMFICategory, QUANTFUND_CATEGORIES, type QuantFundCategory,
 } from "../lib/categories";
-import { fetchNavHistory, type NavHistory } from "../lib/nav-history";
+import { fetchNavHistory, type NavHistory, type NavPoint } from "../lib/nav-history";
 import {
   computeFundMetrics, quantFundScore, calmarRatio,
   advancedPoolScore, type FundMetrics, type PoolFundData,
@@ -32,6 +32,9 @@ import {
 import { fmtPct, fmtNum } from "../lib/format";
 import { AppShell } from "@/components/AppShell";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
+import { storeSeries } from "../lib/fund-store";
+import { computeEngineMetrics, buildBenchmark, type EngineMetrics } from "../lib/scoring-engine";
+import { saveEngineCache, loadEngineCache } from "../lib/engine-cache";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -284,6 +287,67 @@ function DashboardPage() {
       localStorage.setItem(LS_METRICS_KEY, JSON.stringify(obj));
     } catch { /* quota exceeded — no-op */ }
   }, [overallDone]);
+
+  // Populate shared fund-store as NAV data arrives so other pages (Rankings,
+  // Screener, Fund Detail) can read it instantly via initialData — no re-fetch.
+  useEffect(() => {
+    for (const [code, h] of freshNavMap) {
+      storeSeries(code, h.series);
+    }
+  }, [freshNavMap]);
+
+  // After all NAV data is loaded, compute 7-pillar EngineMetrics in the
+  // background and persist to engine-cache.  When the user navigates to
+  // Rankings, metricCache is pre-loaded and the page renders instantly.
+  // Processing is split across setTimeout ticks so it never freezes the UI.
+  useEffect(() => {
+    if (!overallDone || overallCandidates.length === 0) return;
+
+    const existingCache = loadEngineCache();
+
+    // Group by category — only compute what is missing and where we have series
+    const byCategory = new Map<QuantFundCategory, { code: string; series: NavPoint[] }[]>();
+    for (const s of overallCandidates) {
+      if (existingCache.has(s.schemeCode)) continue;
+      const series = freshNavMap.get(s.schemeCode)?.series;
+      if (!series?.length) continue;
+      let arr = byCategory.get(s.poolCategory);
+      if (!arr) { arr = []; byCategory.set(s.poolCategory, arr); }
+      arr.push({ code: s.schemeCode, series });
+    }
+
+    if (byCategory.size === 0) return;
+
+    const cats = [...byCategory.keys()];
+    let catIdx = 0;
+
+    const processNextCategory = () => {
+      if (catIdx >= cats.length) return;
+      const cat = cats[catIdx++];
+      const entries = byCategory.get(cat)!;
+
+      // All category series needed for building the equal-weighted benchmark
+      const allCatSeries = overallCandidates
+        .filter((s) => s.poolCategory === cat)
+        .map((s) => freshNavMap.get(s.schemeCode)?.series)
+        .filter((s): s is NavPoint[] => !!s && s.length > 0);
+
+      if (allCatSeries.length >= 2) {
+        const benchmark = buildBenchmark(allCatSeries);
+        const newEntries = new Map<string, EngineMetrics>();
+        for (const { code, series } of entries) {
+          newEntries.set(code, computeEngineMetrics(series, benchmark));
+        }
+        saveEngineCache(newEntries);
+      }
+
+      // Yield to the UI thread between categories so Dashboard stays responsive
+      setTimeout(processNextCategory, 12);
+    };
+
+    // Start 1 second after Dashboard finishes rendering so it doesn't compete
+    setTimeout(processNextCategory, 1000);
+  }, [overallDone]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Progressively ranked from any combination of cached + freshly loaded metrics
   const overallRanked = useMemo((): ScoredOverall[] => {
