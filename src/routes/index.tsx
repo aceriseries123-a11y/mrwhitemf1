@@ -55,9 +55,9 @@ function Landing() {
             <Link to="/portfolio" className="hover:text-foreground">Portfolio</Link>
           </nav>
           <div className="ml-auto flex items-center gap-2">
-            <Link to="/dashboard" className="hidden rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground md:inline">Sign in</Link>
+            <Link to="/dashboard" className="hidden rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground md:inline">Open terminal</Link>
             <Link to="/dashboard" className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-br from-primary to-cyan px-3 py-1.5 text-sm font-medium text-primary-foreground shadow-glow">
-              Open terminal <ArrowRight className="h-3.5 w-3.5" />
+              Get started <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
         </div>
@@ -88,7 +88,7 @@ function Landing() {
             </div>
           </motion.div>
 
-          {/* Terminal preview */}
+          {/* Terminal preview — sample data only */}
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7, delay: 0.1 }}
             className="glass mt-12 overflow-hidden rounded-2xl">
             <div className="flex items-center gap-2 border-b border-border bg-surface/60 px-4 py-2 text-xs text-muted-foreground">
@@ -104,7 +104,7 @@ function Landing() {
               <TopRanked />
             </div>
             <div className="border-t border-border bg-background/40 px-4 py-2 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-              Preview only · illustrative shapes, not real fund data
+              Illustrative shapes only · Not real fund data · All values are sample/demo
             </div>
           </motion.div>
         </div>
@@ -124,25 +124,29 @@ function Landing() {
         </div>
       </section>
 
-      {/* AI scoring */}
-      <section id="ai" className="border-y border-border bg-surface/30">
+      {/* Scoring methodology */}
+      <section id="scoring" className="border-y border-border bg-surface/30">
         <div className="mx-auto grid max-w-7xl grid-cols-1 gap-12 px-4 py-20 md:grid-cols-2 md:items-center">
           <div>
-            <SectionHeader eyebrow="AI Scoring" title="Composite Buy Score, beyond trailing returns" subtitle="A 9-factor institutional model that penalises volatility, rewards consistency, and stress-tests across regimes." />
+            <SectionHeader eyebrow="Scoring Engine" title="QuantFund Score: a transparent composite" subtitle="A 4-factor rules-based model that penalises volatility, rewards consistency, and is computed entirely from real NAV history. No AI, no black box." />
             <ul className="mt-6 space-y-2 text-sm">
               {SCORE_WEIGHTS.map((s) => (
                 <li key={s.label} className="flex items-center gap-3">
                   <div className="h-2 w-40 overflow-hidden rounded-full bg-muted">
-                    <div className="h-full rounded-full bg-gradient-to-r from-primary to-cyan" style={{ width: `${s.w * 4}%` }} />
+                    <div className="h-full rounded-full bg-gradient-to-r from-primary to-cyan" style={{ width: `${s.w * 2.5}%` }} />
                   </div>
                   <span className="font-mono text-xs text-muted-foreground">{s.w}%</span>
                   <span className="text-sm">{s.label}</span>
                 </li>
               ))}
             </ul>
+            <p className="mt-4 text-xs text-muted-foreground">
+              All scores are category-scoped — Large Cap scores are not comparable to Small Cap scores.
+              Rankings are always within a single SEBI category.
+            </p>
           </div>
           <div className="glass rounded-2xl p-5">
-            <div className="text-xs uppercase tracking-wider text-muted-foreground">Composite Buy Score</div>
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">QuantFund Score · Radar · Sample / Illustrative</div>
             <Chart height={320} option={{
               radar: {
                 indicator: [
@@ -157,11 +161,11 @@ function Landing() {
               series: [{
                 type: "radar",
                 data: [
-                  { value: [88, 84, 92, 79, 76, 81], name: "Top Pick", areaStyle: { color: "rgba(120,200,255,0.25)" }, lineStyle: { color: "#7ad6ff" }, itemStyle: { color: "#7ad6ff" } },
+                  { value: [88, 84, 92, 79, 76, 81], name: "Sample Fund A", areaStyle: { color: "rgba(120,200,255,0.25)" }, lineStyle: { color: "#7ad6ff" }, itemStyle: { color: "#7ad6ff" } },
                   { value: [70, 65, 62, 58, 72, 60], name: "Category Avg", lineStyle: { color: "rgba(255,255,255,0.4)" }, itemStyle: { color: "rgba(255,255,255,0.4)" } },
                 ],
               }],
-              legend: { data: ["Top Pick", "Category Avg"], textStyle: { color: "rgba(245,247,250,0.7)" }, top: 4 },
+              legend: { data: ["Sample Fund A", "Category Avg"], textStyle: { color: "rgba(245,247,250,0.7)" }, top: 4 },
             }} />
           </div>
         </div>
@@ -182,7 +186,7 @@ function Landing() {
 
       </main>
       <footer className="border-t border-border py-8 text-center text-xs text-muted-foreground">
-        © {new Date().getFullYear()} QuantFund · Research platform · For educational use
+        © {new Date().getFullYear()} QuantFund · Research platform · For educational use · Data: AMFI India, mfapi.in, Yahoo Finance
       </footer>
     </div>
   );
@@ -199,27 +203,23 @@ function SectionHeader({ eyebrow, title, subtitle }: { eyebrow: string; title: s
 }
 
 const HIGHLIGHTS = [
-  { icon: BarChart3, title: "Rolling return heatmaps", desc: "Daily, weekly, monthly windows over 20Y — see consistency, not lucky points." },
-  { icon: ShieldCheck, title: "Drawdown & recovery", desc: "Max DD, Ulcer Index, recovery time, bear-market survival score." },
-  { icon: Brain, title: "AI fund ranking", desc: "9-factor composite score with category-relative percentile normalisation." },
-  { icon: Layers, title: "Portfolio optimizer", desc: "Efficient frontier, overlap analysis, risk parity, diversification score." },
-  { icon: LineChart, title: "Risk-adjusted scoring", desc: "Sharpe, Sortino, Treynor, Information Ratio, downside deviation." },
-  { icon: Target, title: "Smart screener", desc: "Multi-condition filters with percentile + outlier removal across the universe." },
+  { icon: BarChart3, title: "Rolling return heatmaps", desc: "Daily, weekly, monthly windows over available NAV history — see consistency, not lucky single-period returns." },
+  { icon: ShieldCheck, title: "Drawdown & recovery", desc: "Max DD, Ulcer Index, recovery time, bear-market survival score — all from real NAV history." },
+  { icon: Brain, title: "QuantFund Score", desc: "4-factor transparent composite: CAGR, Sharpe, Max Drawdown, Rolling Consistency. Rules-based — not AI." },
+  { icon: Layers, title: "Portfolio optimizer", desc: "Efficient frontier, overlap analysis, risk parity, diversification score. (Coming soon)" },
+  { icon: LineChart, title: "Risk-adjusted scoring", desc: "Sharpe, Sortino, Treynor, Information Ratio, downside deviation — all computed from AMFI NAV data." },
+  { icon: Target, title: "Smart screener", desc: "Category-scoped metric filters: score, return, drawdown, Sharpe — apply thresholds across the full AMFI universe." },
 ];
 
 const SCORE_WEIGHTS = [
-  { label: "Rolling Return Consistency", w: 25 },
-  { label: "Downside Protection", w: 20 },
-  { label: "Sharpe Ratio", w: 15 },
-  { label: "Drawdown Stability", w: 10 },
-  { label: "Benchmark Outperformance", w: 10 },
-  { label: "Expense Efficiency", w: 10 },
-  { label: "Fund Manager Stability", w: 5 },
-  { label: "Portfolio Diversification", w: 5 },
+  { label: "3Y CAGR", w: 35 },
+  { label: "Sharpe Ratio", w: 25 },
+  { label: "Max Drawdown (lower is better)", w: 20 },
+  { label: "1Y Rolling Positive Rate", w: 20 },
 ];
 
-// Static, deterministic demo data so the landing page never blocks the main
-// thread. Real data loads on /dashboard.
+// Static deterministic demo data for the landing page preview.
+// Clearly labeled "Sample / Illustrative" in the UI — not real fund data.
 const HERO_LABELS = Array.from({ length: 36 }, (_, i) => {
   const d = new Date(); d.setMonth(d.getMonth() - (35 - i));
   return d.toISOString().slice(0, 7);
@@ -247,7 +247,7 @@ function HeroChart() {
   return (
     <div className="rounded-xl border border-border bg-card/60 p-3 md:col-span-2">
       <div className="mb-2 flex items-center justify-between text-xs">
-        <span className="font-mono text-muted-foreground">NAV · Indexed to 100</span>
+        <span className="font-mono text-muted-foreground">NAV · Indexed to 100 · <span className="text-warning">Sample data</span></span>
         <span className={`font-mono ${ret3Y >= 0 ? "text-positive" : "text-negative"}`}>
           {ret3Y >= 0 ? "+" : ""}{ret3Y}% · 3Y
         </span>
@@ -255,9 +255,9 @@ function HeroChart() {
       <Chart height={220} option={{
         xAxis: { type: "category", data: labels, ...axisStyle, axisLabel: { ...axisStyle.axisLabel, showMaxLabel: true, interval: Math.floor(labels.length / 6) } },
         yAxis: { type: "value", scale: true, ...axisStyle },
-        legend: { data: ["Top Pick", "Benchmark"], textStyle: { color: "rgba(245,247,250,0.7)" }, top: 0, right: 0 },
+        legend: { data: ["Sample Fund", "Benchmark"], textStyle: { color: "rgba(245,247,250,0.7)" }, top: 0, right: 0 },
         series: [
-          { name: "Top Pick", type: "line", showSymbol: false, data: fundData, smooth: true,
+          { name: "Sample Fund", type: "line", showSymbol: false, data: fundData, smooth: true,
             lineStyle: { width: 2, color: "#7ad6ff" },
             areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: "rgba(122,214,255,0.35)" }, { offset: 1, color: "rgba(122,214,255,0)" }] } } },
           { name: "Benchmark", type: "line", showSymbol: false, data: benchData, smooth: true,
@@ -289,7 +289,7 @@ function RollingHeatmap() {
   return (
     <div className="rounded-xl border border-border bg-card/60 p-3 md:col-span-2">
       <div className="mb-2 flex items-center justify-between text-xs">
-        <span className="font-mono text-muted-foreground">Monthly returns · Heatmap</span>
+        <span className="font-mono text-muted-foreground">Monthly returns · Heatmap · <span className="text-warning">Sample data</span></span>
         <span className="font-mono text-cyan">{years.length}Y window</span>
       </div>
       <Chart height={220} option={{
@@ -305,25 +305,25 @@ function RollingHeatmap() {
   );
 }
 
+// These are illustrative names only — NOT real fund recommendations or real scheme codes.
 const TOP_RANKED_DEMO = [
-  { code: "1", amc: "Parag Parikh", bucket: "Flexi Cap", aiScore: 92, r3Y: 24.6 },
-  { code: "2", amc: "Quant", bucket: "Small Cap", aiScore: 89, r3Y: 32.1 },
-  { code: "3", amc: "HDFC", bucket: "Mid Cap", aiScore: 86, r3Y: 27.4 },
-  { code: "4", amc: "Nippon India", bucket: "Multi Cap", aiScore: 84, r3Y: 22.8 },
-  { code: "5", amc: "Axis", bucket: "ELSS", aiScore: 81, r3Y: 19.3 },
-  { code: "6", amc: "ICICI Pru", bucket: "Large & Mid", aiScore: 79, r3Y: 21.0 },
+  { code: "demo-1", amc: "Flexi Cap Fund A", bucket: "Flexi Cap", qfScore: 87, r3Y: 21.4 },
+  { code: "demo-2", amc: "Small Cap Fund B", bucket: "Small Cap", qfScore: 83, r3Y: 28.7 },
+  { code: "demo-3", amc: "Mid Cap Fund C", bucket: "Mid Cap", qfScore: 81, r3Y: 24.1 },
+  { code: "demo-4", amc: "Multi Cap Fund D", bucket: "Multi Cap", qfScore: 78, r3Y: 19.5 },
+  { code: "demo-5", amc: "ELSS Fund E", bucket: "ELSS", qfScore: 74, r3Y: 17.8 },
+  { code: "demo-6", amc: "Large & Mid F", bucket: "Large & Mid", qfScore: 71, r3Y: 16.2 },
 ];
 
 function TopRanked() {
-  const ranked = TOP_RANKED_DEMO;
   return (
     <div className="rounded-xl border border-border bg-card/60 p-3">
       <div className="mb-2 flex items-center justify-between text-xs">
-        <span className="font-mono text-muted-foreground">Top ranked · AI score</span>
+        <span className="font-mono text-muted-foreground">Top ranked · QF Score · <span className="text-warning">Sample</span></span>
         <Trophy className="h-3.5 w-3.5 text-cyan" />
       </div>
       <div className="space-y-2">
-        {ranked.map((f, i) => (
+        {TOP_RANKED_DEMO.map((f, i) => (
           <div key={f.code} className="flex items-center gap-3 rounded-lg border border-border bg-surface/60 px-2.5 py-2">
             <div className="grid h-6 w-6 place-items-center rounded-md bg-gradient-to-br from-primary to-cyan font-mono text-[10px] font-bold text-primary-foreground">{i + 1}</div>
             <div className="min-w-0 flex-1">
@@ -331,13 +331,12 @@ function TopRanked() {
               <div className="text-[10px] text-muted-foreground">{f.bucket}</div>
             </div>
             <div className="text-right font-mono text-xs">
-              <div className="text-cyan">{f.aiScore}</div>
-              <div className="text-[10px] text-positive">{f.r3Y.toFixed(1)}%</div>
+              <div className="text-cyan">{f.qfScore}</div>
+              <div className="text-[10px] text-positive">+{f.r3Y.toFixed(1)}%</div>
             </div>
           </div>
         ))}
       </div>
     </div>
   );
-  }
-
+}
