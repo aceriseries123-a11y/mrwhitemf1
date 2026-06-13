@@ -4,6 +4,9 @@
  * Opens as a blurred glass popup below the header search bar.
  * Results link directly to /fund/$id — no redirect to the explorer.
  * Keyboard: ⌘K to open, ↑↓ to navigate, Enter to open, Escape to close.
+ *
+ * PERF: debounced query (150 ms) + pre-built lowercase search index so that
+ * filtering 4,000+ schemes never blocks the main thread on every keystroke.
  */
 
 import { useState, useEffect, useRef, useMemo } from "react";
@@ -16,6 +19,15 @@ import { classifyAMFICategory } from "@/lib/categories";
 
 const MAX_RESULTS = 8;
 
+function useDebounce<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
+}
+
 export function GlobalSearch({ className }: { className?: string }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -26,17 +38,30 @@ export function GlobalSearch({ className }: { className?: string }) {
 
   const { data: schemes, isLoading } = useAMFISchemes();
 
+  // Pre-build search index once when schemes load — never rebuilt on keystrokes
+  const searchIndex = useMemo(() => {
+    if (!schemes) return [];
+    return filterActiveSchemes(schemes).map((s) => ({
+      scheme: s,
+      hay: `${s.schemeName} ${s.amc} ${s.schemeCode}`.toLowerCase(),
+    }));
+  }, [schemes]);
+
+  // Debounce query so filtering only runs 150 ms after the user stops typing
+  const debouncedQuery = useDebounce(query, 150);
+
   const results = useMemo(() => {
-    if (!schemes || !query.trim()) return [];
-    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-    const active = filterActiveSchemes(schemes);
-    return active
-      .filter((s) => {
-        const hay = `${s.schemeName} ${s.amc} ${s.schemeCode}`.toLowerCase();
-        return terms.every((t) => hay.includes(t));
-      })
-      .slice(0, MAX_RESULTS);
-  }, [schemes, query]);
+    if (!searchIndex.length || !debouncedQuery.trim()) return [];
+    const terms = debouncedQuery.toLowerCase().split(/\s+/).filter(Boolean);
+    const out: AMFIScheme[] = [];
+    for (const { scheme, hay } of searchIndex) {
+      if (terms.every((t) => hay.includes(t))) {
+        out.push(scheme);
+        if (out.length >= MAX_RESULTS) break;
+      }
+    }
+    return out;
+  }, [searchIndex, debouncedQuery]);
 
   const openSearch = () => {
     setOpen(true);
