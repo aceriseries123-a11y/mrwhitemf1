@@ -179,10 +179,10 @@ function DashboardPage() {
     });
   }, [activeSchemes]);
 
-  // ── Overall pool — individual browser fetches with localStorage cache ────
+  // ── Overall pool — individual browser fetches with engine-cache ─────────
   // mfapi.in rate-limits server-side batch requests (shared CF Worker IP).
   // Browser fetches with high concurrency (100) are reliable and fast.
-  // Computed metrics are cached in localStorage so reloads are instant.
+  // Computed metrics are cached in engine-cache (localStorage) so reloads are instant.
 
   // Skip fetching funds whose engine metrics are already cached for today
   const engineCacheOnMount = useRef(loadEngineCache());
@@ -352,12 +352,18 @@ function DashboardPage() {
   );
 
   const catTotal  = catCandidates.length;
+  // Full count of scored funds in this category (not capped to TOP_N).
+  // Used for the progress bar and catDone — catRanked is just the display slice.
+  const catScoredCount = useMemo(
+    () => allRanked.filter(f => f.poolCategory === activeCategory).length,
+    [allRanked, activeCategory],
+  );
   const catRanked = useMemo(
     () => allRanked.filter(f => f.poolCategory === activeCategory).slice(0, TOP_N),
     [allRanked, activeCategory],
   );
-  const catLoaded = catRanked.length;
-  const catDone   = catLoaded > 0 && catLoaded === catTotal;
+  const catLoaded = catScoredCount;
+  const catDone   = catScoredCount > 0 && overallDone;
 
   // ── KPI strip ────────────────────────────────────────────────────────────
   const topScore    = overallRanked[0]?.finalScore ?? null;
