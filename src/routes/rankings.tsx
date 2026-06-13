@@ -31,7 +31,7 @@ export const Route = createFileRoute("/rankings")({
 
 const ALL_CATEGORIES = QUANTFUND_CATEGORIES.filter((c) => c !== "Unknown") as QuantFundCategory[];
 
-type SortKey = "advScore" | "ret1y" | "cagr3y" | "sharpe" | "maxDD";
+type SortKey = "finalScore" | "cagr3y" | "sharpe" | "maxDD" | "confScore";
 
 function tone(v: number | null): string {
   if (v == null) return "text-muted-foreground";
@@ -52,7 +52,7 @@ function ScoreBar({ value }: { value: number | null }) {
 function Rankings() {
   const [search, setSearch] = useState("");
   const [selectedCat, setSelectedCat] = useState<QuantFundCategory | "All">("All");
-  const [sortKey, setSortKey] = useState<SortKey>("advScore");
+  const [sortKey, setSortKey] = useState<SortKey>("finalScore");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   // Reactive store read — re-renders whenever Dashboard calls setFullRankedList.
@@ -96,16 +96,16 @@ function Rankings() {
     const dir = sortDir === "desc" ? -1 : 1;
     return [...list].sort((a, b) => {
       const va =
-        sortKey === "advScore" ? a.advScore
-        : sortKey === "ret1y"  ? a.metrics.ret1y
-        : sortKey === "cagr3y" ? a.metrics.cagr3y
-        : sortKey === "sharpe" ? a.metrics.sharpe
+        sortKey === "finalScore" ? a.finalScore
+        : sortKey === "confScore" ? a.confidenceScore
+        : sortKey === "cagr3y"   ? a.metrics.cagr3y
+        : sortKey === "sharpe"   ? a.metrics.sharpe
         : a.metrics.maxDrawdown;
       const vb =
-        sortKey === "advScore" ? b.advScore
-        : sortKey === "ret1y"  ? b.metrics.ret1y
-        : sortKey === "cagr3y" ? b.metrics.cagr3y
-        : sortKey === "sharpe" ? b.metrics.sharpe
+        sortKey === "finalScore" ? b.finalScore
+        : sortKey === "confScore" ? b.confidenceScore
+        : sortKey === "cagr3y"   ? b.metrics.cagr3y
+        : sortKey === "sharpe"   ? b.metrics.sharpe
         : b.metrics.maxDrawdown;
       if (va == null && vb == null) return 0;
       if (va == null) return 1;
@@ -165,7 +165,7 @@ function Rankings() {
           <div>
             <h1 className="font-display text-2xl font-bold tracking-tight">Global Rankings</h1>
             <p className="mt-1 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
-              {allRanked.length.toLocaleString()} Direct-Growth funds · Advanced Score
+              {allRanked.length.toLocaleString()} Direct-Growth funds · 7-Pillar Engine Score
             </p>
           </div>
           <DataSourceBadge />
@@ -174,13 +174,14 @@ function Rankings() {
         {/* Score definition strip */}
         <div className="rounded-xl border border-border bg-surface/60 px-4 py-3">
           <p className="font-mono text-[10px] leading-relaxed text-muted-foreground">
-            <span className="font-bold text-cyan">Advanced Score</span> — cross-category, percentile-normalised within the full universe:
-            Sharpe <span className="text-foreground">28%</span> ·
-            Sortino <span className="text-foreground">22%</span> ·
-            Calmar <span className="text-foreground">20%</span> ·
-            3Y CAGR <span className="text-foreground">15%</span> ·
-            Rolling+ <span className="text-foreground">10%</span> ·
-            MaxDD <span className="text-foreground">5%</span>
+            <span className="font-bold text-cyan">Engine Score</span> — 7-pillar institutional scoring, category-relative percentile:
+            LT Consistency <span className="text-foreground">23%</span> ·
+            Risk-Adjusted <span className="text-foreground">20%</span> ·
+            Downside Protection <span className="text-foreground">20%</span> ·
+            Cost Efficiency <span className="text-foreground">15%</span> ·
+            Portfolio Quality <span className="text-foreground">12%</span> ·
+            Short-Term <span className="text-foreground">5%</span> ·
+            Management <span className="text-foreground">5%</span>
           </p>
         </div>
 
@@ -245,8 +246,8 @@ function Rankings() {
                 <tr className="border-b border-border bg-background/95 font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
                   <th className="p-3 font-medium">#</th>
                   <th className="p-3 font-medium">Fund</th>
-                  <SortTh label="Adv. Score" k="advScore" />
-                  <SortTh label="1Y Ret" k="ret1y" />
+                  <SortTh label="Engine Score" k="finalScore" />
+                  <SortTh label="Conf." k="confScore" />
                   <SortTh label="3Y CAGR" k="cagr3y" />
                   <SortTh label="Sharpe" k="sharpe" />
                   <SortTh label="Max DD" k="maxDD" />
@@ -292,18 +293,23 @@ function Rankings() {
                             <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[8px] text-muted-foreground">
                               {fund.poolCategory}
                             </span>
+                            {fund.rating && (
+                              <span className={`rounded border px-1.5 py-0.5 font-mono text-[8px] font-bold ${fund.ratingColor ?? "text-muted-foreground"}`}>
+                                {fund.rating}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </td>
 
                       {/* Advanced Score */}
                       <td className="p-3 text-right">
-                        {fund.advScore != null ? (
+                        {fund.finalScore != null ? (
                           <div className="inline-flex flex-col items-end gap-0.5">
                             <span className="font-mono text-[12px] font-bold tabular-nums text-cyan">
-                              {fmtNum(fund.advScore, 1)}
+                              {fmtNum(fund.finalScore, 1)}
                             </span>
-                            <ScoreBar value={fund.advScore} />
+                            <ScoreBar value={fund.finalScore} />
                           </div>
                         ) : (
                           <span className="font-mono text-[10px] text-muted-foreground">—</span>
@@ -311,8 +317,8 @@ function Rankings() {
                       </td>
 
                       {/* 1Y Return */}
-                      <td className={`p-3 text-right font-mono text-[11px] font-bold tabular-nums ${tone(fund.metrics.ret1y)}`}>
-                        {fmtPct(fund.metrics.ret1y, { signed: true })}
+                      <td className="p-3 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
+                        {fund.confidenceScore != null ? fmtNum(fund.confidenceScore, 0) : "—"}
                       </td>
 
                       {/* 3Y CAGR */}
