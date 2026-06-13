@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { AlertCircle, Loader2, Search, X, DatabaseZap } from "lucide-react";
 import { useAMFISchemes, filterActiveSchemes, type AMFIScheme } from "@/lib/live-data";
 import { classifyAMFICategory, QUANTFUND_CATEGORIES, type QuantFundCategory } from "@/lib/categories";
@@ -19,11 +19,20 @@ export const Route = createFileRoute("/explorer")({
   component: Explorer,
 });
 
-type Row = AMFIScheme & { qfCategory: QuantFundCategory };
+type Row = AMFIScheme & { qfCategory: QuantFundCategory; hay: string };
 type SortField = "name" | "category" | "amc" | "nav" | "date";
 type SortDir = "asc" | "desc";
 
 const PAGE_SIZE = 100;
+
+function useDebounce<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
+}
 
 function Explorer() {
   const { data: allSchemes, isLoading, isError, error } = useAMFISchemes();
@@ -33,22 +42,27 @@ function Explorer() {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [page, setPage] = useState(1);
 
+  // Debounce text search so heavy filtering only fires after user pauses
+  const debouncedQuery = useDebounce(query, 150);
+
+  // Pre-build enriched rows (including lowercase search string) once when
+  // schemes load — this work is never repeated on filter/sort changes.
   const enriched: Row[] = useMemo(() => {
     if (!allSchemes) return [];
     return filterActiveSchemes(allSchemes).map((s) => ({
       ...s,
       qfCategory: classifyAMFICategory(s.category),
+      hay: `${s.schemeName} ${s.amc} ${s.schemeCode}`.toLowerCase(),
     }));
   }, [allSchemes]);
 
+  // Filter + sort — separated from page so page reset doesn't cause double render
   const view = useMemo(() => {
-    setPage(1);
-    const terms = query.toLowerCase().split(/\s+/).map((t) => t.trim()).filter(Boolean);
+    const terms = debouncedQuery.toLowerCase().split(/\s+/).filter(Boolean);
     const filtered = enriched.filter((s) => {
       if (category !== "All" && s.qfCategory !== category) return false;
       if (terms.length === 0) return true;
-      const hay = `${s.schemeName} ${s.amc} ${s.schemeCode}`.toLowerCase();
-      return terms.every((t) => hay.includes(t));
+      return terms.every((t) => s.hay.includes(t));
     });
     const dir = sortDir === "asc" ? 1 : -1;
     return filtered.sort((a, b) => {
@@ -57,7 +71,10 @@ function Explorer() {
       if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
       return String(va).localeCompare(String(vb)) * dir;
     });
-  }, [enriched, query, category, sortField, sortDir]);
+  }, [enriched, debouncedQuery, category, sortField, sortDir]);
+
+  // Reset to page 1 when filters/sort change — done in useEffect, not inside useMemo
+  useEffect(() => { setPage(1); }, [view]);
 
   const totalPages = Math.ceil(view.length / PAGE_SIZE);
   const pageRows = view.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
