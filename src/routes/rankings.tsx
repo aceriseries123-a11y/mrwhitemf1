@@ -1,13 +1,14 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import {
   AlertCircle, Loader2, Trophy, CheckCircle2,
-  ChevronDown, ChevronUp, ShieldCheck, Zap, Search, X,
+  ChevronDown, ChevronUp, ShieldCheck, Zap, Search, X, Info,
 } from "lucide-react";
 import { useAMFISchemes, filterActiveSchemes, type AMFIScheme } from "@/lib/live-data";
-import { classifyAMFICategory, type QuantFundCategory } from "@/lib/categories";
-import { fetchNavHistoryBatch, type NavPoint } from "@/lib/nav-history";
+import { classifyAMFICategory, QUANTFUND_CATEGORIES, type QuantFundCategory } from "@/lib/categories";
+import { fetchNavHistory } from "@/lib/nav-history";
+import type { NavPoint } from "@/lib/nav-history";
 import { fmtPct, fmtNum } from "@/lib/format";
 import { AppShell } from "@/components/AppShell";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
@@ -34,9 +35,8 @@ export const Route = createFileRoute("/rankings")({
   component: Rankings,
 });
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const BATCH_SIZE = 100; // codes per nav-batch request
+// ─── All recognised categories (same set as dashboard) ───────────────────────
+const ALL_CATEGORIES = QUANTFUND_CATEGORIES.filter(c => c !== "Unknown") as QuantFundCategory[];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -49,17 +49,35 @@ type Row = AMFIScheme & {
   totalInCategory: number;
 };
 
-// ─── Helper components ────────────────────────────────────────────────────────
+// ─── Sub-components ───────────────────────────────────────────────────────────
 
-function PillarBar({ label, score, weight, available }: {
-  label: string; score: number; weight: number; available: boolean;
+function InfoTip({ text }: { text: string }) {
+  return (
+    <span className="group/tip relative ml-1 inline-flex align-middle" role="tooltip" aria-label={text}>
+      <Info className="h-3 w-3 cursor-help text-muted-foreground" aria-hidden="true" />
+      <span className="pointer-events-none absolute right-0 top-4 z-30 hidden w-64 rounded-xl border border-border bg-surface p-2.5 text-[10px] normal-case leading-relaxed tracking-normal text-foreground shadow-2xl group-hover/tip:block">
+        {text}
+      </span>
+    </span>
+  );
+}
+
+function PillarBar({ label, score, weight, available, isProxy }: {
+  label: string; score: number; weight: number; available: boolean; isProxy?: boolean;
 }) {
   const { color } = available ? getRating(score) : { color: "text-muted-foreground" };
   return (
     <div className="flex items-center gap-2">
-      <span className="w-[148px] shrink-0 font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
-        {label}
-      </span>
+      <div className="flex w-[152px] shrink-0 items-center gap-1">
+        <span className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
+          {label}
+        </span>
+        {isProxy && available && (
+          <span className="rounded border border-warning/30 bg-warning/[0.07] px-0.5 font-mono text-[6px] uppercase text-warning">
+            proxy
+          </span>
+        )}
+      </div>
       <div className="flex flex-1 items-center gap-2">
         {available ? (
           <>
@@ -92,11 +110,9 @@ function ScoreCard({ row, rank, expanded, onToggle }: {
 
   return (
     <div className={`rounded-xl border transition-all duration-200 ${
-      rank <= 3
-        ? "border-cyan/30 bg-cyan/[0.02] shadow-[0_0_20px_rgba(34,211,238,0.06)]"
-        : rank <= 10
-        ? "border-border/80 bg-surface/80"
-        : "border-border/50 bg-surface/40"
+      rank <= 3  ? "border-cyan/30 bg-cyan/[0.02] shadow-[0_0_20px_rgba(34,211,238,0.06)]"
+      : rank <= 10 ? "border-border/80 bg-surface/80"
+      : "border-border/50 bg-surface/40"
     }`}>
       <button className="w-full text-left" onClick={onToggle} aria-expanded={expanded}>
         <div className="flex items-center gap-3 p-4">
@@ -119,7 +135,7 @@ function ScoreCard({ row, rank, expanded, onToggle }: {
                 to="/fund/$id"
                 params={{ id: row.schemeCode }}
                 className="truncate text-sm font-semibold text-foreground transition-colors hover:text-cyan"
-                onClick={(e) => e.stopPropagation()}
+                onClick={e => e.stopPropagation()}
               >
                 {row.schemeName}
               </Link>
@@ -132,12 +148,12 @@ function ScoreCard({ row, rank, expanded, onToggle }: {
             </div>
             {sw && (sw.strengths.length > 0 || sw.weaknesses.length > 0) && (
               <div className="mt-1.5 flex flex-wrap gap-1">
-                {sw.strengths.map((s) => (
+                {sw.strengths.map(s => (
                   <span key={s} className="flex items-center gap-0.5 rounded border border-positive/20 bg-positive/[0.07] px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-widest text-positive">
                     <Zap className="h-2 w-2" />{s}
                   </span>
                 ))}
-                {sw.weaknesses.map((w) => (
+                {sw.weaknesses.map(w => (
                   <span key={w} className="flex items-center gap-0.5 rounded border border-negative/20 bg-negative/[0.07] px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-widest text-negative">
                     <ShieldCheck className="h-2 w-2" />{w}
                   </span>
@@ -146,13 +162,11 @@ function ScoreCard({ row, rank, expanded, onToggle }: {
             )}
           </div>
 
-          {/* Score block */}
+          {/* Score */}
           {sr && ratingInfo ? (
             <div className="flex shrink-0 flex-col items-end gap-1">
               <div className="flex items-baseline gap-1">
-                <span className="font-display text-3xl font-black tabular-nums leading-none text-cyan">
-                  {sr.fundScore}
-                </span>
+                <span className="font-display text-3xl font-black tabular-nums leading-none text-cyan">{sr.fundScore}</span>
                 <span className="font-mono text-[8px] text-muted-foreground">/100</span>
               </div>
               <span className={`rounded border px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-widest ${ratingInfo.bg} ${ratingInfo.color}`}>
@@ -160,12 +174,11 @@ function ScoreCard({ row, rank, expanded, onToggle }: {
               </span>
               <div className="flex items-center gap-1">
                 <span className="font-mono text-[8px] text-muted-foreground">Confidence</span>
-                <span className="font-mono text-[10px] font-bold tabular-nums text-foreground">
-                  {sr.confidenceScore}
-                </span>
+                <span className="font-mono text-[10px] font-bold tabular-nums">{sr.confidenceScore}</span>
               </div>
-              {expanded ? <ChevronUp className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" />
-                        : <ChevronDown className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" />}
+              {expanded
+                ? <ChevronUp className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" />
+                : <ChevronDown className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" />}
             </div>
           ) : (
             <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
@@ -177,19 +190,22 @@ function ScoreCard({ row, rank, expanded, onToggle }: {
       {expanded && sr && em && (
         <div className="border-t border-border/60 px-4 py-4">
           <div className="grid gap-6 sm:grid-cols-2">
-            {/* Pillar scores */}
+            {/* Pillar bars */}
             <div className="space-y-1.5">
-              <p className="mb-2 font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground">Pillar Scores</p>
+              <p className="mb-2 font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
+                Pillar Scores
+                <InfoTip text="Proxy pillars use NAV-derived metrics as the real data feed (expense ratio, portfolio holdings, manager info) is not yet available from AMFI/mfapi.in." />
+              </p>
               <PillarBar label="Long-Term Consistency" score={sr.pillars.longTermConsistency.rawScore} weight={23} available={sr.pillars.longTermConsistency.available} />
               <PillarBar label="Short-Term Perf." score={sr.pillars.shortTermPerformance.rawScore} weight={5} available={sr.pillars.shortTermPerformance.available} />
               <PillarBar label="Risk-Adjusted" score={sr.pillars.riskAdjusted.rawScore} weight={20} available={sr.pillars.riskAdjusted.available} />
               <PillarBar label="Downside Protection" score={sr.pillars.downsideProtection.rawScore} weight={20} available={sr.pillars.downsideProtection.available} />
-              <PillarBar label="Cost Efficiency" score={0} weight={15} available={false} />
-              <PillarBar label="Portfolio Quality" score={0} weight={12} available={false} />
-              <PillarBar label="Management & AUM" score={0} weight={5} available={false} />
+              <PillarBar label="Cost Efficiency" score={sr.pillars.costEfficiency.rawScore} weight={15} available={sr.pillars.costEfficiency.available} isProxy />
+              <PillarBar label="Portfolio Quality" score={sr.pillars.portfolioQuality.rawScore} weight={12} available={sr.pillars.portfolioQuality.available} isProxy />
+              <PillarBar label="Management & AUM" score={sr.pillars.managementAUM.rawScore} weight={5} available={sr.pillars.managementAUM.available} isProxy />
             </div>
 
-            {/* Key metrics grid */}
+            {/* Metrics grid */}
             <div>
               <p className="mb-2 font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground">Key Metrics</p>
               <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
@@ -199,13 +215,13 @@ function ScoreCard({ row, rank, expanded, onToggle }: {
                   { label: "Sortino",   v: em.sortino,          fmt: (x: number) => fmtNum(x, 2) },
                   { label: "Sharpe",    v: em.sharpe,           fmt: (x: number) => fmtNum(x, 2) },
                   { label: "Info Ratio",v: em.informationRatio, fmt: (x: number) => fmtNum(x, 2) },
+                  { label: "Alpha",     v: em.longRunAlpha,     fmt: (x: number) => fmtPct(x, { signed: true }) },
+                  { label: "Calmar",    v: em.calmarRatio,      fmt: (x: number) => fmtNum(x, 2) },
                   { label: "Beta",      v: em.beta,             fmt: (x: number) => fmtNum(x, 2) },
                   { label: "↓ Capture", v: em.downsideCapture,  fmt: (x: number) => `${fmtNum(x, 1)}%` },
                   { label: "↑ Capture", v: em.upsideCapture,    fmt: (x: number) => `${fmtNum(x, 1)}%` },
                   { label: "Max DD",    v: em.maxDrawdown,      fmt: (x: number) => fmtPct(x, { signed: true }) },
                   { label: "Recovery",  v: em.recoveryMonths,   fmt: (x: number) => `${fmtNum(x, 1)} mo` },
-                  { label: "Std Dev",   v: em.stdDev,           fmt: (x: number) => fmtPct(x) },
-                  { label: "History",   v: em.historyYears,     fmt: (x: number) => `${fmtNum(x, 1)} yr` },
                 ].map(({ label, v, fmt }) => (
                   <div key={label}>
                     <p className="font-mono text-[8px] uppercase tracking-widest text-muted-foreground">{label}</p>
@@ -216,8 +232,8 @@ function ScoreCard({ row, rank, expanded, onToggle }: {
                 ))}
               </div>
               <p className="mt-3 font-mono text-[8px] text-muted-foreground">
-                Confidence {sr.confidenceScore}/100 · {em.dataPoints.toLocaleString()} NAV points ·
-                Cat rank {row.categoryRank}/{row.totalInCategory} in {row.quantCategory}
+                Confidence {sr.confidenceScore}/100 · {em.dataPoints.toLocaleString()} NAV pts ·
+                {em.historyYears > 0 ? ` ${fmtNum(em.historyYears, 1)} yrs history ·` : ""} Cat rank {row.categoryRank}/{row.totalInCategory}
               </p>
             </div>
           </div>
@@ -234,75 +250,74 @@ function Rankings() {
   const [expandedCode, setExpandedCode] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
-  // All active direct-growth schemes across ALL categories
-  const allCandidates = useMemo(() => {
+  // Metric cache — avoids recomputing on every render as new NAV data arrives
+  const metricCache = useRef<Map<string, EngineMetrics>>(new Map());
+
+  // All active direct-growth schemes — same pool as dashboard
+  const allCandidates = useMemo((): (AMFIScheme & { poolCategory: QuantFundCategory })[] => {
     if (!allSchemes) return [];
     const active = filterActiveSchemes(allSchemes);
-    const direct = active.filter(
-      (s) => /direct/i.test(s.schemeName) && /growth/i.test(s.schemeName),
-    );
-    return direct.length >= 50 ? direct : active;
+    return ALL_CATEGORIES.flatMap(category => {
+      const inCat = active.filter(s => classifyAMFICategory(s.category) === category);
+      const direct = inCat.filter(
+        s => /direct/i.test(s.schemeName) && /growth/i.test(s.schemeName),
+      );
+      return direct.map(s => ({ ...s, poolCategory: category }));
+    });
   }, [allSchemes]);
 
-  // Split into batches of BATCH_SIZE for the server-side batch endpoint
-  const batches = useMemo(() => {
-    const out: string[][] = [];
-    for (let i = 0; i < allCandidates.length; i += BATCH_SIZE) {
-      out.push(allCandidates.slice(i, i + BATCH_SIZE).map((s) => s.schemeCode));
-    }
-    return out;
-  }, [allCandidates]);
-
-  // One React Query per batch — all fire in parallel
-  const batchQueries = useQueries({
-    queries: batches.map((codes) => ({
-      queryKey: ["nav-batch", codes.join(",")],
-      queryFn: () => fetchNavHistoryBatch(codes),
+  // Individual browser fetches — SAME queryKey as dashboard so React Query cache
+  // is shared. If the user visited the dashboard first, most/all will be instant.
+  // This avoids the server-side batch endpoint which gets rate-limited by mfapi.in.
+  const navQueries = useQueries({
+    queries: allCandidates.map(s => ({
+      queryKey: ["nav-history", s.schemeCode],
+      queryFn:  () => fetchNavHistory(s.schemeCode),
       staleTime: 12 * 60 * 60 * 1000,
       retry: 1,
     })),
   });
 
-  // Progress counters
-  const batchesLoaded = batchQueries.filter((q) => q.isSuccess || q.isError).length;
-  const batchesTotal = batchQueries.length;
-  const progressPct = batchesTotal > 0 ? Math.round((batchesLoaded / batchesTotal) * 100) : 0;
-  const isLoadingData = batchesLoaded < batchesTotal;
+  // Progress
+  const navSettled = useMemo(
+    () => navQueries.filter(q => q.status === "success" || q.status === "error").length,
+    [navQueries],
+  );
+  const navLoaded = useMemo(
+    () => navQueries.filter(q => q.status === "success").length,
+    [navQueries],
+  );
+  const navTotal  = allCandidates.length;
+  const isDone    = navSettled === navTotal && navTotal > 0;
+  const pct       = navTotal > 0 ? Math.round((navSettled / navTotal) * 100) : 0;
 
-  // Merge all batch results into one code → series map
+  // Build series map from loaded queries
   const seriesMap = useMemo(() => {
     const map = new Map<string, NavPoint[]>();
-    for (const q of batchQueries) {
-      if (!q.data) continue;
-      for (const [code, hist] of Object.entries(q.data)) {
-        if (hist?.series?.length) map.set(code, hist.series);
-      }
-    }
+    allCandidates.forEach((s, i) => {
+      const d = navQueries[i]?.data;
+      if (d?.series?.length) map.set(s.schemeCode, d.series);
+    });
     return map;
-  }, [batchQueries]);
+  }, [allCandidates, navQueries]);
 
-  // Two-pass scoring:
-  //   1. Group loaded funds by category
-  //   2. Build benchmark per category
-  //   3. Compute metrics (with benchmark)
-  //   4. Score vs peers
-  //   5. Flatten and sort globally
+  // Two-pass scoring (reruns progressively as more data arrives):
+  //   Pass 1 — group by category, build benchmark, compute metrics
+  //   Pass 2 — score each fund against its category peers
+  //   Pass 3 — flatten, sort globally, assign ranks
   const ranked = useMemo((): Row[] => {
-    // Collect loaded funds
-    const loaded: { scheme: AMFIScheme; series: NavPoint[]; cat: QuantFundCategory }[] = [];
-    for (const scheme of allCandidates) {
-      const series = seriesMap.get(scheme.schemeCode);
-      if (!series) continue;
-      loaded.push({ scheme, series, cat: classifyAMFICategory(scheme.category) });
-    }
-    if (!loaded.length) return [];
+    // Group loaded funds by category
+    const byCategory = new Map<QuantFundCategory, {
+      scheme: AMFIScheme; series: NavPoint[];
+    }[]>();
 
-    // Group by category
-    const byCategory = new Map<QuantFundCategory, typeof loaded>();
-    for (const item of loaded) {
-      let arr = byCategory.get(item.cat);
-      if (!arr) { arr = []; byCategory.set(item.cat, arr); }
-      arr.push(item);
+    for (const s of allCandidates) {
+      const series = seriesMap.get(s.schemeCode);
+      if (!series) continue;
+      const cat = classifyAMFICategory(s.category);
+      let arr = byCategory.get(cat);
+      if (!arr) { arr = []; byCategory.set(cat, arr); }
+      arr.push({ scheme: s, series });
     }
 
     const allRows: Row[] = [];
@@ -310,59 +325,61 @@ function Rankings() {
     for (const [cat, entries] of byCategory) {
       if (entries.length < 2) continue;
 
-      // Build category benchmark
-      const benchmark = buildBenchmark(entries.map((e) => e.series));
+      const benchmark = buildBenchmark(entries.map(e => e.series));
 
-      // Compute per-fund metrics (with benchmark if available)
-      const metricsList = entries.map((e) => computeEngineMetrics(e.series, benchmark));
+      const metricsList = entries.map(e => {
+        // Return cached metric if available (only recompute for new entries)
+        let m = metricCache.current.get(e.scheme.schemeCode);
+        if (!m) {
+          m = computeEngineMetrics(e.series, benchmark);
+          metricCache.current.set(e.scheme.schemeCode, m);
+        }
+        return m;
+      });
 
-      // Score each fund against its category peers
+      // Score all within category
       entries.forEach((e, i) => {
-        const em = metricsList[i];
-        const sr = scoreWithPeers(em, metricsList);
+        const sr = scoreWithPeers(metricsList[i], metricsList);
         allRows.push({
           ...e.scheme,
-          quantCategory: cat,
-          engineMetrics: em,
-          scoreResult: sr,
-          globalRank: 0,   // filled below
-          categoryRank: 0, // filled below
+          quantCategory:   cat,
+          engineMetrics:   metricsList[i],
+          scoreResult:     sr,
+          globalRank:      0,
+          categoryRank:    0,
           totalInCategory: entries.length,
         });
       });
     }
 
-    // Sort globally by fund score
+    // Sort globally
     allRows.sort((a, b) => (b.scoreResult?.fundScore ?? -1) - (a.scoreResult?.fundScore ?? -1));
-
-    // Assign global rank
     allRows.forEach((r, i) => { r.globalRank = i + 1; });
 
-    // Assign category rank (first time a category appears = rank 1, since list is sorted by score)
-    const catRankCounter = new Map<QuantFundCategory, number>();
+    // Category ranks (list is sorted by score → first occurrence per cat = rank 1)
+    const catRankCount = new Map<QuantFundCategory, number>();
     for (const row of allRows) {
-      const cur = (catRankCounter.get(row.quantCategory) ?? 0) + 1;
-      catRankCounter.set(row.quantCategory, cur);
+      const cur = (catRankCount.get(row.quantCategory) ?? 0) + 1;
+      catRankCount.set(row.quantCategory, cur);
       row.categoryRank = cur;
     }
 
     return allRows;
   }, [allCandidates, seriesMap]);
 
-  // Search filter (applied at display time only, does not affect scoring)
+  // Search filter (display only, does not change scoring)
   const filteredRows = useMemo(() => {
     if (!search.trim()) return ranked;
     const q = search.toLowerCase();
-    return ranked.filter(
-      (r) =>
-        r.schemeName.toLowerCase().includes(q) ||
-        r.amc.toLowerCase().includes(q) ||
-        r.quantCategory.toLowerCase().includes(q) ||
-        r.schemeCode.includes(q),
+    return ranked.filter(r =>
+      r.schemeName.toLowerCase().includes(q) ||
+      r.amc.toLowerCase().includes(q) ||
+      r.quantCategory.toLowerCase().includes(q) ||
+      r.schemeCode.includes(q),
     );
   }, [ranked, search]);
 
-  // ── Error state ──────────────────────────────────────────────────────────
+  // ── Error ────────────────────────────────────────────────────────────────
   if (isError) {
     return (
       <AppShell title="Rankings">
@@ -372,22 +389,19 @@ function Rankings() {
             <p className="mb-1 font-display text-sm font-semibold uppercase tracking-widest text-negative">
               Fund data unavailable
             </p>
-            <p className="text-sm text-muted-foreground">
-              {(error as Error)?.message ?? "Unknown error"}
-            </p>
+            <p className="text-sm text-muted-foreground">{(error as Error)?.message ?? "Unknown error"}</p>
           </div>
         </div>
       </AppShell>
     );
   }
 
-  // ── Schemes loading ──────────────────────────────────────────────────────
   if (schemesLoading || !allSchemes) {
     return (
       <AppShell title="Rankings">
         <div className="flex flex-col items-center gap-3 py-24 text-muted-foreground">
           <Loader2 className="h-5 w-5 animate-spin text-cyan" />
-          <p className="font-mono text-[11px] uppercase tracking-widest">Loading AMFI fund universe…</p>
+          <p className="font-mono text-[11px] uppercase tracking-widest">Loading AMFI universe…</p>
         </div>
       </AppShell>
     );
@@ -411,86 +425,78 @@ function Rankings() {
             </p>
           </div>
           <DataSourceBadge source="AMFI + mfapi.in" asOf={asOf}
-            note="Scores are always computed within each fund's category peer group." />
+            note="Scores are computed within each fund's category peer group." />
         </div>
 
-        {/* Loading progress bar */}
-        {batchesTotal > 0 && (
-          <div className="rounded-xl border border-border bg-surface/60 p-4">
-            <div className="mb-2 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                {isLoadingData ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan" />
-                ) : (
-                  <CheckCircle2 className="h-3.5 w-3.5 text-positive" />
-                )}
-                <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-foreground">
-                  {isLoadingData
-                    ? `Loading NAV data… ${batchesLoaded}/${batchesTotal} batches`
-                    : `All data loaded — ${ranked.length.toLocaleString()} funds scored`}
-                </span>
-              </div>
-              <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
-                {progressPct}%
+        {/* Loading progress */}
+        {navTotal > 0 && (
+          <div className="rounded-xl border border-border bg-surface/60 px-4 py-3">
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                {isDone
+                  ? <CheckCircle2 className="h-3.5 w-3.5 text-positive" />
+                  : <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan" />}
+                {isDone
+                  ? `All data loaded — ${ranked.length.toLocaleString()} funds scored`
+                  : `Loading NAV data — ${navLoaded.toLocaleString()} scored`}
+                <span className="opacity-60">/ {navTotal.toLocaleString()} total</span>
               </span>
+              <span className="font-mono text-[10px] text-muted-foreground">{pct}%</span>
             </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
               <div
-                className="h-full rounded-full bg-cyan transition-all duration-500"
-                style={{ width: `${progressPct}%` }}
+                className={`h-full rounded-full transition-all duration-300 ${isDone ? "bg-positive" : "bg-cyan"}`}
+                style={{ width: `${pct}%` }}
               />
             </div>
-            <div className="mt-2 flex items-center justify-between font-mono text-[9px] text-muted-foreground">
-              <span>
-                {seriesMap.size.toLocaleString()} / {allCandidates.length.toLocaleString()} funds loaded
-              </span>
-              <span>{ranked.length.toLocaleString()} funds scored so far</span>
-            </div>
+            {!isDone && navLoaded > 0 && (
+              <p className="mt-1.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                Rankings update live as data loads · {navSettled}/{navTotal} settled
+              </p>
+            )}
           </div>
         )}
 
-        {/* Pillar weight reference */}
+        {/* Pillar weights */}
         <div className="overflow-hidden rounded-xl border border-border bg-surface/60">
           <div className="border-b border-border/40 px-4 py-2">
             <p className="font-mono text-[9px] font-bold uppercase tracking-[0.18em] text-cyan">
-              QuantFund Scoring Engine — Pillar Weights
+              QuantFund Scoring Engine — 7 Pillars
             </p>
           </div>
           <div className="grid grid-cols-4 gap-2 px-4 py-3 sm:grid-cols-7">
             {[
-              { name: "Long-Term Consistency", w: 23, live: true },
-              { name: "Short-Term", w: 5, live: true },
-              { name: "Risk-Adjusted", w: 20, live: true },
-              { name: "Downside Protection", w: 20, live: true },
-              { name: "Cost Efficiency", w: 15, live: false },
-              { name: "Portfolio Quality", w: 12, live: false },
-              { name: "Mgmt & AUM", w: 5, live: false },
-            ].map(({ name, w, live }) => (
-              <div key={name} className={`rounded-lg border p-2 ${live ? "border-border bg-background" : "border-border/30 bg-background/30 opacity-50"}`}>
+              { name: "Long-Term Consistency", w: 23, proxy: false },
+              { name: "Short-Term",            w: 5,  proxy: false },
+              { name: "Risk-Adjusted",         w: 20, proxy: false },
+              { name: "Downside Protection",   w: 20, proxy: false },
+              { name: "Cost Efficiency",       w: 15, proxy: true },
+              { name: "Portfolio Quality",     w: 12, proxy: true },
+              { name: "Mgmt & AUM",            w: 5,  proxy: true },
+            ].map(({ name, w, proxy }) => (
+              <div key={name} className="rounded-lg border border-border bg-background p-2">
                 <p className="font-mono text-[7px] uppercase tracking-widest text-muted-foreground leading-tight">{name}</p>
-                <p className={`mt-1 font-display text-base font-black tabular-nums ${live ? "text-foreground" : "text-muted-foreground"}`}>{w}%</p>
-                <p className={`font-mono text-[7px] uppercase tracking-widest ${live ? "text-positive" : "text-muted-foreground"}`}>
-                  {live ? "● Live" : "○ Phase 2"}
+                <p className="mt-1 font-display text-base font-black tabular-nums text-foreground">{w}%</p>
+                <p className={`font-mono text-[7px] uppercase tracking-widest ${proxy ? "text-warning" : "text-positive"}`}>
+                  {proxy ? "● Proxy" : "● Live"}
                 </p>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Search bar */}
+        {/* Search */}
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <input
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Filter by fund name, AMC, category, or scheme code…"
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Filter by name, AMC, category or scheme code…"
             className="w-full rounded-xl border border-border bg-surface px-9 py-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:border-cyan focus:outline-none focus:ring-1 focus:ring-cyan/20"
           />
           {search && (
-            <button
-              onClick={() => setSearch("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            >
+            <button onClick={() => setSearch("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
               <X className="h-3.5 w-3.5" />
             </button>
           )}
@@ -503,36 +509,43 @@ function Rankings() {
               ? `${filteredRows.length.toLocaleString()} results for "${search}"`
               : `${ranked.length.toLocaleString()} funds ranked globally`}
           </span>
-          {isLoadingData && (
+          {!isDone && navLoaded > 0 && (
             <span className="flex items-center gap-1.5 font-mono text-[9px] text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Scoring {ranked.length} / {allCandidates.length}…
+              Scoring {ranked.length}/{navTotal} …
             </span>
           )}
         </div>
 
-        {/* Score cards */}
-        {filteredRows.length === 0 && !isLoadingData ? (
+        {/* Cards */}
+        {filteredRows.length === 0 && !isDone ? (
+          <div className="flex flex-col items-center gap-3 rounded-xl border border-border py-16 text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin text-cyan" />
+            <p className="font-mono text-[11px] uppercase tracking-widest">
+              Loading fund data… {navLoaded}/{navTotal}
+            </p>
+          </div>
+        ) : filteredRows.length === 0 ? (
           <div className="rounded-xl border border-border py-16 text-center font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-            {search ? `No funds match "${search}"` : "Loading fund data…"}
+            No funds match "{search}"
           </div>
         ) : (
           <div className="space-y-2 pb-8">
-            {filteredRows.map((row) => (
+            {filteredRows.map(row => (
               <ScoreCard
                 key={row.schemeCode}
                 row={row}
-                rank={search ? row.globalRank : row.globalRank}
+                rank={row.globalRank}
                 expanded={expandedCode === row.schemeCode}
                 onToggle={() =>
                   setExpandedCode(expandedCode === row.schemeCode ? null : row.schemeCode)
                 }
               />
             ))}
-            {isLoadingData && ranked.length > 0 && (
-              <div className="flex items-center justify-center gap-2 rounded-xl border border-border border-dashed py-6 font-mono text-[10px] text-muted-foreground">
+            {!isDone && ranked.length > 0 && (
+              <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-border py-6 font-mono text-[10px] text-muted-foreground">
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan" />
-                Loading more funds… {batchesLoaded}/{batchesTotal} batches complete
+                Fetching remaining funds… {navSettled}/{navTotal} complete
               </div>
             )}
           </div>
@@ -540,13 +553,14 @@ function Rankings() {
 
         {/* Footer */}
         <p className="pb-8 text-[10px] leading-relaxed text-muted-foreground">
-          <strong className="text-foreground">Scoring:</strong> Fund Score (0–100) is the weighted percentile rank across
-          4 live pillars. Information Ratio, Beta, and Capture Ratios use the category equal-weighted NAV benchmark.
-          Scores are computed within each fund's category peer group — cross-category comparison is invalid.
+          <strong className="text-foreground">Scoring:</strong> Fund Score (0–100) uses all 7 pillars.
+          Pillars 1–4 use real NAV metrics; Pillars 5–7 use NAV-derived proxies (Alpha, Calmar, Rolling Consistency, Fund Longevity)
+          until expense-ratio and portfolio-holdings feeds are integrated.
+          All scoring is category-relative — cross-category comparison is not valid.
           Data: {" "}
           <a href="https://www.amfiindia.com" target="_blank" rel="noopener noreferrer" className="text-cyan underline underline-offset-2">AMFI</a>
           {" "}&amp; <a href="https://www.mfapi.in" target="_blank" rel="noopener noreferrer" className="text-cyan underline underline-offset-2">mfapi.in</a>.
-          Research tool only — not investment advice.
+          Research tool — not investment advice. Last updated: {asOf ?? "—"}.
         </p>
       </div>
     </AppShell>
