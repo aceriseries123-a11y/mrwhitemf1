@@ -147,8 +147,8 @@ function ScoreBar({ value }: { value: number | null }) {
 }
 
 function ProgressBar({
-  settled, loaded, total, label,
-}: { settled: number; loaded: number; total: number; label: string }) {
+  settled, loaded, total, label, noData,
+}: { settled: number; loaded: number; total: number; label: string; noData?: number }) {
   const pct = total > 0 ? Math.round((settled / total) * 100) : 0;
   const done = settled === total && total > 0;
   return (
@@ -160,6 +160,9 @@ function ProgressBar({
             : <Loader2 className="h-3 w-3 animate-spin text-cyan" />}
           {label} — {loaded.toLocaleString()} scored
           <span className="opacity-60">/ {total.toLocaleString()} total</span>
+          {done && noData != null && noData > 0 && (
+            <span className="opacity-50">· {noData.toLocaleString()} no mfapi data</span>
+          )}
         </span>
         <span className="font-mono text-[10px] text-muted-foreground">{pct}%</span>
       </div>
@@ -269,6 +272,7 @@ function DashboardPage() {
   );
   const overallSettled = cachedCount + freshSettled;
   const overallLoaded  = cachedCount + freshLoaded;
+  const overallFailed  = (freshSettled - freshLoaded); // settled but no data on mfapi.in
   const overallTotal   = overallCandidates.length;
   const overallDone    = overallSettled === overallTotal && overallTotal > 0;
 
@@ -348,8 +352,9 @@ function DashboardPage() {
     () => catNavQ.filter((q) => q.status === "success").length,
     [catNavQ],
   );
-  const catTotal = catCandidates.length;
-  const catDone  = catSettled === catTotal && catTotal > 0;
+  const catFailed = catSettled - catLoaded;
+  const catTotal  = catCandidates.length;
+  const catDone   = catSettled === catTotal && catTotal > 0;
 
   const catRanked = useMemo((): CatRow[] => {
     const rows: CatRow[] = catCandidates.map((s, i) => {
@@ -377,8 +382,10 @@ function DashboardPage() {
         maxDD:  m.maxDrawdown,
       };
     });
-    rows.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
-    return rows.slice(0, TOP_N);
+    // Only show funds that have loaded data — skip null-score rows entirely
+    const loaded = rows.filter((r) => r.score !== null);
+    loaded.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+    return loaded.slice(0, TOP_N);
   }, [catCandidates, catNavQ]);
 
   // ── KPI strip ────────────────────────────────────────────────────────────
@@ -495,6 +502,7 @@ function DashboardPage() {
             settled={overallSettled}
             loaded={overallLoaded}
             total={overallTotal}
+            noData={overallFailed}
             label={`Overall pool · ${OVERALL_POOL_CATEGORIES.length} categories`}
           />
 
@@ -657,6 +665,7 @@ function DashboardPage() {
             settled={catSettled}
             loaded={catLoaded}
             total={catTotal}
+            noData={catFailed}
             label={`${activeCategory} · ${catTotal} Direct-Growth plans`}
           />
 
