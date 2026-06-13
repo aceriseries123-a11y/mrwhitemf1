@@ -349,58 +349,60 @@ function DashboardPage() {
     setTimeout(processNextCategory, 1000);
   }, [overallDone]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Two-phase scoring — decouples fast cache-fill from expensive O(n²) scoring ──
+  // ── Overall scoring ───────────────────────────────────────────────────────
+  // Two concerns pulled apart:
+  //   • Cache fill  (O(n per new fund)) — runs inline on every freshNavMap update
+  //   • Pool scoring (O(n²))           — skipped between milestones via ref so
+  //                                      downstream memos/effects don't cascade
   //
-  // Phase 1: Populate metric cache as NAVs arrive.
-  //   O(history_len) per new fund. Runs every freshNavMap update. Fast.
-  useEffect(() => {
-    for (const s of overallCandidates) {
-      if (overallMetricCache.current.has(s.schemeCode)) continue;
-      const history = freshNavMap.get(s.schemeCode);
-      if (!history) continue;
-      const metrics = computeFundMetrics(history.series);
-      overallMetricCache.current.set(s.schemeCode, {
-        metrics,
-        calmar: calmarRatio(metrics),
-      });
-    }
-  }, [overallCandidates, freshNavMap]);
+  // Returning the same ref between milestones means React sees no change in
+  // overallAllScored, so overallRanked / fund-store export don't re-run.
+  const lastScoredRef    = useRef<ScoredOverall[]>([]);
+  const lastScoreSizeRef = useRef(0);
 
-  // Phase 2: Score the full pool (O(n²)) only at milestones — every 50 new funds
-  //   plus once when loading completes. Runs ~20× total instead of ~1000×.
-  //   This is the main fix for UI lag: keeps the main thread free between milestones.
-  const [overallAllScored, setOverallAllScored] = useState<ScoredOverall[]>([]);
-  const lastScoreSize = useRef(0);
-
-  useEffect(() => {
-    const cacheSize = overallMetricCache.current.size;
-    const BATCH = 50;
-    const atMilestone =
-      overallDone ||
-      (cacheSize >= 20 &&
-        Math.floor(cacheSize / BATCH) > Math.floor(lastScoreSize.current / BATCH));
-    if (!atMilestone) return;
-
-    lastScoreSize.current = cacheSize;
-
+  const overallAllScored = useMemo((): ScoredOverall[] => {
+    // Fill metric cache for any newly-loaded fund (fast — O(history_len))
     const pool: ScoredOverall[] = [];
     for (const s of overallCandidates) {
-      const cached = overallMetricCache.current.get(s.schemeCode);
-      if (!cached) continue;
+      let cached = overallMetricCache.current.get(s.schemeCode);
+      if (!cached) {
+        const history = freshNavMap.get(s.schemeCode);
+        if (!history) continue;
+        const metrics = computeFundMetrics(history.series);
+        cached = { metrics, calmar: calmarRatio(metrics) };
+        overallMetricCache.current.set(s.schemeCode, cached);
+      }
       pool.push({ scheme: s, ...cached, advScore: null });
     }
-    if (pool.length < 3) return;
+    if (pool.length < 3) return lastScoredRef.current;
 
+    // Only score the pool at milestones — every 25 new funds or when done.
+    // Between milestones we return the previous reference, so nothing downstream
+    // re-renders and the O(n²) advancedPoolScore is called ~40× total, not ~1000×.
+    const BATCH = 25;
+    const atMilestone =
+      overallDone ||
+      Math.floor(pool.length / BATCH) > Math.floor(lastScoreSizeRef.current / BATCH);
+    if (!atMilestone) return lastScoredRef.current;
+
+    lastScoreSizeRef.current = pool.length;
     const scored = pool.map((f) => ({
       ...f,
       advScore: advancedPoolScore(f, pool),
     }));
     scored.sort((a, b) => (b.advScore ?? -1) - (a.advScore ?? -1));
-    setOverallAllScored(scored);
+    lastScoredRef.current = scored;
+    return scored;
+  }, [overallCandidates, freshNavMap, overallDone]);
 
-    // Export to fund-store so Rankings/Screener read instantly — no re-fetch
+  // Dashboard Table 1: top 10 from the scored pool
+  const overallRanked = useMemo(() => overallAllScored.slice(0, TOP_N), [overallAllScored]);
+
+  // Export milestone results to fund-store — Rankings reads this instantly
+  useEffect(() => {
+    if (overallAllScored.length === 0) return;
     setFullRankedList(
-      scored.map((f): RankedFund => ({
+      overallAllScored.map((f): RankedFund => ({
         schemeCode:   f.scheme.schemeCode,
         schemeName:   f.scheme.schemeName,
         amc:          f.scheme.amc,
@@ -412,11 +414,7 @@ function DashboardPage() {
         calmar:       f.calmar,
       })),
     );
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overallCandidates, overallDone, overallLoaded]); // integer counter, not freshNavMap reference
-
-  // Dashboard Table 1: top 10 from the scored pool
-  const overallRanked = useMemo(() => overallAllScored.slice(0, TOP_N), [overallAllScored]);
+  }, [overallAllScored]);
 
   // ── Category pool — reads directly from Table 1's cache ─────────────────
   // NO separate useQueries. Table 1 already fetched and computed metrics for
