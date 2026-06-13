@@ -84,8 +84,9 @@ function Rankings() {
       (s) => classifyAMFICategory(s.category) === activeCategory,
     );
     const direct = inCat.filter((s) => /direct/i.test(s.schemeName) && /growth/i.test(s.schemeName));
-    const pool = direct.length >= 10 ? direct : inCat;
-    return pool.slice(0, TOP_N);
+    // Do NOT pre-slice here — fetch all candidates so the top-N after scoring
+    // reflects the genuinely best funds, not the first N by AMFI code order.
+    return direct.length >= 10 ? direct : inCat;
   }, [activeSchemes, activeCategory]);
 
   const navQueries = useQueries({

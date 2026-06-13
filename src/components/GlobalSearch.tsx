@@ -113,7 +113,7 @@ export function GlobalSearch({ className }: { className?: string }) {
         />
       )}
 
-      <div ref={containerRef} className={`relative ${className ?? ""}`}>
+      <div ref={containerRef} className={`relative z-50 ${className ?? ""}`}>
         {/* Search trigger / input */}
         <div
           role="button"
