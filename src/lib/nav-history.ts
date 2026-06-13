@@ -3,6 +3,10 @@
  *
  * mfapi.in is a community mirror of AMFI's daily NAV file with full history.
  * No API key. Returns up to ~20Y of daily NAVs per scheme.
+ *
+ * Concurrency limiter: max 20 simultaneous requests to avoid overwhelming
+ * mfapi.in and the browser connection pool. Requests beyond 20 are queued
+ * and dispatched as slots free up — this is the primary speed optimisation.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -26,48 +30,96 @@ export interface NavHistory {
   series: NavPoint[];
 }
 
+// ─── Concurrency limiter ───────────────────────────────────────────────────────
+// Limits simultaneous mfapi.in fetches to MAX_CONCURRENT. Requests beyond
+// that limit are queued and dispatched FIFO as slots become available.
+// Without this, 1400+ concurrent fetches overwhelm the browser connection pool
+// and trigger server-side rate limiting, causing random timeouts.
+
+const MAX_CONCURRENT = 20;
+let inFlight = 0;
+const waitQueue: Array<() => void> = [];
+
+function acquireSlot(): Promise<void> {
+  if (inFlight < MAX_CONCURRENT) {
+    inFlight++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => waitQueue.push(resolve));
+}
+
+function releaseSlot(): void {
+  if (waitQueue.length > 0) {
+    const next = waitQueue.shift()!;
+    next(); // hands the slot directly to the next waiter
+  } else {
+    inFlight--;
+  }
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 function parseDDMMYYYY(s: string): number {
   // "12-06-2026"
   const [dd, mm, yyyy] = s.split("-");
   return Date.UTC(Number(yyyy), Number(mm) - 1, Number(dd));
 }
 
+// ─── Fetch ────────────────────────────────────────────────────────────────────
+
 export async function fetchNavHistory(schemeCode: string): Promise<NavHistory> {
-  const r = await fetch(`https://api.mfapi.in/mf/${encodeURIComponent(schemeCode)}`, {
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (!r.ok) throw new Error(`NAV history HTTP ${r.status}`);
-  const json = (await r.json()) as {
-    meta: {
-      scheme_code: number;
-      scheme_name: string;
-      fund_house: string;
-      scheme_type: string;
-      scheme_category: string;
+  // Wait for a concurrency slot before making the HTTP request
+  await acquireSlot();
+
+  try {
+    const r = await fetch(
+      `https://api.mfapi.in/mf/${encodeURIComponent(schemeCode)}`,
+      {
+        // 8 s timeout — fail fast so queued requests can proceed.
+        // The old 20 s timeout meant each stuck fund blocked a slot for 20 s.
+        signal: AbortSignal.timeout(8_000),
+      },
+    );
+    if (!r.ok) throw new Error(`NAV history HTTP ${r.status}`);
+
+    const json = (await r.json()) as {
+      meta: {
+        scheme_code: number;
+        scheme_name: string;
+        fund_house: string;
+        scheme_type: string;
+        scheme_category: string;
+      };
+      data: Array<{ date: string; nav: string }>;
     };
-    data: Array<{ date: string; nav: string }>;
-  };
-  if (!json.data || json.data.length === 0) {
-    throw new Error("NAV history empty — scheme may be inactive");
+
+    if (!json.data || json.data.length === 0) {
+      throw new Error("NAV history empty — scheme may be inactive");
+    }
+
+    // mfapi.in returns newest first; we want oldest first
+    const series: NavPoint[] = [];
+    for (let i = json.data.length - 1; i >= 0; i--) {
+      const row = json.data[i];
+      const nav = parseFloat(row.nav);
+      if (!isFinite(nav) || nav <= 0) continue;
+      const t = parseDDMMYYYY(row.date);
+      if (!isFinite(t)) continue;
+      series.push({ t, d: new Date(t).toISOString().slice(0, 10), nav });
+    }
+
+    return {
+      schemeCode: String(json.meta.scheme_code),
+      schemeName: json.meta.scheme_name,
+      fundHouse: json.meta.fund_house,
+      schemeType: json.meta.scheme_type,
+      schemeCategory: json.meta.scheme_category,
+      series,
+    };
+  } finally {
+    // Always release the slot — even on error — so the queue keeps moving
+    releaseSlot();
   }
-  // mfapi.in returns newest first; we want oldest first
-  const series: NavPoint[] = [];
-  for (let i = json.data.length - 1; i >= 0; i--) {
-    const row = json.data[i];
-    const nav = parseFloat(row.nav);
-    if (!isFinite(nav) || nav <= 0) continue;
-    const t = parseDDMMYYYY(row.date);
-    if (!isFinite(t)) continue;
-    series.push({ t, d: new Date(t).toISOString().slice(0, 10), nav });
-  }
-  return {
-    schemeCode: String(json.meta.scheme_code),
-    schemeName: json.meta.scheme_name,
-    fundHouse: json.meta.fund_house,
-    schemeType: json.meta.scheme_type,
-    schemeCategory: json.meta.scheme_category,
-    series,
-  };
 }
 
 export function useNavHistory(schemeCode: string | undefined) {
