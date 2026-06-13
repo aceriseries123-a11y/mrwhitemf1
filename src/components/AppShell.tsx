@@ -217,8 +217,8 @@ export function AppShell({ children, title }: { children: ReactNode; title?: str
         {/* Market ticker */}
         <MarketTickerBar />
 
-        {/* Page content */}
-        <main className="p-4 md:p-6">{children}</main>
+        {/* Page content — key forces remount on route change, triggering fade-in */}
+        <main key={path} className="page-transition p-4 md:p-6">{children}</main>
       </div>
     </div>
   );
