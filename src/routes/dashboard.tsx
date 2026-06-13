@@ -15,7 +15,7 @@
 
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useRef, useState } from "react";
-import { useQueries } from "@tanstack/react-query";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import {
   AlertCircle, Loader2, Info, TrendingUp, Layers,
   CheckCircle2, Star, BarChart2, Activity, Medal,
@@ -24,7 +24,7 @@ import { useAMFISchemes, filterActiveSchemes, type AMFIScheme } from "../lib/liv
 import {
   classifyAMFICategory, QUANTFUND_CATEGORIES, type QuantFundCategory,
 } from "../lib/categories";
-import { fetchNavHistory } from "../lib/nav-history";
+import { fetchNavHistoryBatch, type NavHistory } from "../lib/nav-history";
 import {
   computeFundMetrics, quantFundScore, calmarRatio,
   advancedPoolScore, type FundMetrics, type PoolFundData,
@@ -113,6 +113,12 @@ function planBadge(name: string): PlanBadge {
   return /direct/i.test(name) ? "direct" : "regular";
 }
 
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
 function tone(v: number | null): string {
   if (v == null) return "text-muted-foreground";
   return v >= 0 ? "text-positive" : "text-negative";
@@ -168,7 +174,7 @@ function ProgressBar({
       </div>
       {!done && settled > 0 && (
         <p className="mt-1.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-          Ranking updates live — {settled}/{total} settled · max 20 parallel fetches
+          Ranking updates live — {settled}/{total} funds settled · server batch fetch
         </p>
       )}
     </div>
@@ -209,37 +215,71 @@ function DashboardPage() {
     });
   }, [activeSchemes]);
 
-  const overallNavQ = useQueries({
-    queries: overallCandidates.map((s) => ({
-      queryKey: ["nav-history", s.schemeCode],
-      queryFn: () => fetchNavHistory(s.schemeCode),
+  // ── Batch queries for the overall pool ───────────────────────────────────
+  // Splits codes into chunks of 100 → ~14 browser requests instead of 1,340.
+  // Each request goes to /api/public/nav-batch where the server fans out to
+  // mfapi.in with no connection-pool limit and caches results for 12 h.
+
+  const BATCH_SIZE = 100;
+  const overallBatches = useMemo(
+    () => chunkArray(overallCandidates.map((s) => s.schemeCode), BATCH_SIZE),
+    [overallCandidates],
+  );
+
+  const overallBatchQ = useQueries({
+    queries: overallBatches.map((batch, i) => ({
+      queryKey: ["nav-batch-overall", i, overallCandidates.length],
+      queryFn: () => fetchNavHistoryBatch(batch),
       staleTime: 12 * 60 * 60 * 1000,
       retry: 1,
     })),
   });
 
-  // Count both successes AND errors as "settled" — errored queries never
-  // resolve to q.data so the old counter got stuck at ~96% indefinitely.
+  // Merge all batch results into a single lookup map
+  const overallNavMap = useMemo(() => {
+    const map = new Map<string, NavHistory | null>();
+    overallBatchQ.forEach((q) => {
+      if (q.data) {
+        for (const [code, history] of Object.entries(q.data)) {
+          map.set(code, history);
+        }
+      }
+    });
+    return map;
+  }, [overallBatchQ]);
+
+  // Progress: count funds whose batch has fully settled
   const overallSettled = useMemo(
-    () => overallNavQ.filter((q) => q.status === "success" || q.status === "error").length,
-    [overallNavQ],
+    () =>
+      overallBatchQ.reduce((acc, q, i) => {
+        if (q.status === "success" || q.status === "error") {
+          return acc + (overallBatches[i]?.length ?? 0);
+        }
+        return acc;
+      }, 0),
+    [overallBatchQ, overallBatches],
   );
   const overallLoaded = useMemo(
-    () => overallNavQ.filter((q) => q.status === "success").length,
-    [overallNavQ],
+    () =>
+      overallBatchQ.reduce((acc, q) => {
+        if (q.status === "success" && q.data) {
+          return acc + Object.values(q.data).filter((h) => h !== null).length;
+        }
+        return acc;
+      }, 0),
+    [overallBatchQ],
   );
   const overallFailed = overallSettled - overallLoaded;
-  const overallTotal = overallNavQ.length;
-  const overallDone  = overallSettled === overallTotal && overallTotal > 0;
+  const overallTotal  = overallCandidates.length;
+  const overallDone   = overallSettled === overallTotal && overallTotal > 0;
 
-  // Progressively ranked. Metrics are cached per-fund so each recompute is
-  // O(n) (percentile sort) not O(n × navLen).
+  // Progressively ranked from whatever batches have arrived so far.
   const overallRanked = useMemo((): ScoredOverall[] => {
     const pool: ScoredOverall[] = [];
 
-    overallCandidates.forEach((s, i) => {
-      const history = overallNavQ[i]?.data;
-      if (!history) return;
+    for (const s of overallCandidates) {
+      const history = overallNavMap.get(s.schemeCode);
+      if (!history) continue;
 
       let cached = overallMetricCache.current.get(s.schemeCode);
       if (!cached) {
@@ -249,7 +289,7 @@ function DashboardPage() {
       }
 
       pool.push({ scheme: s, ...cached, advScore: null });
-    });
+    }
 
     if (pool.length < 3) return [];
 
@@ -259,7 +299,7 @@ function DashboardPage() {
     }));
     scored.sort((a, b) => (b.advScore ?? -1) - (a.advScore ?? -1));
     return scored.slice(0, TOP_N);
-  }, [overallCandidates, overallNavQ]);
+  }, [overallCandidates, overallNavMap]);
 
   // ── Category pool ────────────────────────────────────────────────────────
   // Strict Direct-Growth plans only in the selected category. No fallback.
@@ -281,31 +321,49 @@ function DashboardPage() {
     prevCat.current = activeCategory;
   }
 
-  const catNavQ = useQueries({
-    queries: catCandidates.map((s) => ({
-      queryKey: ["nav-history", s.schemeCode],
-      queryFn: () => fetchNavHistory(s.schemeCode),
-      staleTime: 12 * 60 * 60 * 1000,
-      retry: 1,
-    })),
+  // ── Batch query for the category pool ────────────────────────────────────
+  // Typically 30-60 funds per category → fits in a single server request.
+  // Results arrive all at once, so the category table populates in ~3-5 s.
+
+  const catCodes = useMemo(
+    () => catCandidates.map((s) => s.schemeCode),
+    [catCandidates],
+  );
+
+  const catBatchQ = useQuery({
+    queryKey: ["nav-batch-cat", activeCategory, catCandidates.length],
+    queryFn: () => fetchNavHistoryBatch(catCodes),
+    staleTime: 12 * 60 * 60 * 1000,
+    retry: 1,
+    enabled: catCodes.length > 0,
   });
 
-  const catSettled = useMemo(
-    () => catNavQ.filter((q) => q.status === "success" || q.status === "error").length,
-    [catNavQ],
-  );
-  const catLoaded = useMemo(
-    () => catNavQ.filter((q) => q.status === "success").length,
-    [catNavQ],
-  );
+  const catNavMap = useMemo(() => {
+    const map = new Map<string, NavHistory | null>();
+    if (catBatchQ.data) {
+      for (const [code, history] of Object.entries(catBatchQ.data)) {
+        map.set(code, history);
+      }
+    }
+    return map;
+  }, [catBatchQ.data]);
+
+  const catSettled =
+    catBatchQ.status === "success" || catBatchQ.status === "error"
+      ? catCandidates.length
+      : 0;
+  const catLoaded =
+    catBatchQ.status === "success" && catBatchQ.data
+      ? Object.values(catBatchQ.data).filter((h) => h !== null).length
+      : 0;
   const catFailed = catSettled - catLoaded;
-  const catTotal = catNavQ.length;
-  const catDone  = catSettled === catTotal && catTotal > 0;
+  const catTotal  = catCandidates.length;
+  const catDone   = catBatchQ.status === "success" || catBatchQ.status === "error";
 
   const catRanked = useMemo((): CatRow[] => {
-    const rows: CatRow[] = catCandidates.map((s, i) => {
+    const rows: CatRow[] = catCandidates.map((s) => {
       const badge   = planBadge(s.schemeName);
-      const history = catNavQ[i]?.data;
+      const history = catNavMap.get(s.schemeCode);
       if (!history) {
         return { ...s, badge, score: null, ret1y: null, cagr3y: null, sharpe: null, maxDD: null };
       }
@@ -330,7 +388,7 @@ function DashboardPage() {
     });
     rows.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
     return rows.slice(0, TOP_N);
-  }, [catCandidates, catNavQ]);
+  }, [catCandidates, catNavMap]);
 
   // ── KPI strip ────────────────────────────────────────────────────────────
   const topAdvScore  = overallRanked[0]?.advScore ?? null;
