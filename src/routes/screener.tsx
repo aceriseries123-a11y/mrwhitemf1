@@ -1,12 +1,13 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Loader2, Filter, X, CheckCircle2, SlidersHorizontal } from "lucide-react";
 import { useAMFISchemes, filterActiveSchemes, type AMFIScheme } from "@/lib/live-data";
 import {
   classifyAMFICategory, QUANTFUND_CATEGORIES, type QuantFundCategory,
 } from "@/lib/categories";
-import { fetchNavHistory } from "@/lib/nav-history";
+import { fetchNavHistory, type NavHistory } from "@/lib/nav-history";
+import { getSeries } from "@/lib/fund-store";
 import { computeFundMetrics, quantFundScore } from "@/lib/fund-metrics";
 import { fmtPct, fmtNum } from "@/lib/format";
 import { AppShell } from "@/components/AppShell";
@@ -60,6 +61,7 @@ function Screener() {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [sortField, setSortField] = useState<keyof Row>("score");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const queryClient = useQueryClient();
 
   const activeSchemes = useMemo(
     () => (allSchemes ? filterActiveSchemes(allSchemes) : []),
@@ -81,6 +83,24 @@ function Screener() {
       queryFn: () => fetchNavHistory(s.schemeCode),
       staleTime: 12 * 60 * 60 * 1000,
       retry: 1,
+      // Read from React Query cache or fund-store (populated by Dashboard) —
+      // instant for any fund that Dashboard already fetched.
+      initialData: () => {
+        const cached = queryClient.getQueryData<NavHistory>(["nav-history", s.schemeCode]);
+        if (cached) return cached;
+        const series = getSeries(s.schemeCode);
+        if (series) return {
+          schemeCode: s.schemeCode,
+          schemeName: s.schemeName,
+          fundHouse: s.amc,
+          schemeType: s.schemeType,
+          schemeCategory: s.category,
+          series,
+        } satisfies NavHistory;
+        return undefined;
+      },
+      initialDataUpdatedAt: () =>
+        queryClient.getQueryState(["nav-history", s.schemeCode])?.dataUpdatedAt,
     })),
   });
 
