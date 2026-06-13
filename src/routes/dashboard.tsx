@@ -188,7 +188,7 @@ function DashboardPage() {
   );
 
   // ── Overall pool ─────────────────────────────────────────────────────────
-  // All Direct-Growth schemes across every AMFI category. No count cap.
+  // Strict Direct-Growth schemes only across every AMFI category. No fallback.
 
   const overallCandidates = useMemo((): PoolEntry[] => {
     if (!activeSchemes.length) return [];
@@ -197,12 +197,11 @@ function DashboardPage() {
       const inCat = activeSchemes.filter(
         (s) => classifyAMFICategory(s.category) === category,
       );
-      // Overall pool: strict Direct-Growth only (no IDCW, no Regular)
+      // Strict Direct-Growth only — no IDCW, no Regular, no fallback
       const directGrowth = inCat.filter(
         (s) => /direct/i.test(s.schemeName) && /growth/i.test(s.schemeName),
       );
-      const pool = directGrowth.length >= 3 ? directGrowth : inCat;
-      return pool.map((s) => ({ ...s, poolCategory: category }));
+      return directGrowth.map((s) => ({ ...s, poolCategory: category }));
     });
   }, [activeSchemes]);
 
@@ -252,17 +251,16 @@ function DashboardPage() {
   }, [overallCandidates, overallNavQ]);
 
   // ── Category pool ────────────────────────────────────────────────────────
-  // Direct-Growth and Regular-Growth plans only — excludes IDCW/Reinvestment
-  // variants to keep the NAV fetch count low and page load fast.
-  // Badge colours distinguish Direct (green) from Regular (amber).
+  // Strict Direct-Growth plans only in the selected category. No fallback.
 
   const catCandidates = useMemo((): AMFIScheme[] => {
     const inCat = activeSchemes.filter(
       (s) => classifyAMFICategory(s.category) === activeCategory,
     );
-    // Keep only Growth plans (Direct or Regular) — drop IDCW, Reinvestment, etc.
-    const growthOnly = inCat.filter((s) => /growth/i.test(s.schemeName));
-    return growthOnly.length >= 3 ? growthOnly : inCat;
+    // Strict Direct-Growth only — no IDCW, no Regular, no fallback
+    return inCat.filter(
+      (s) => /direct/i.test(s.schemeName) && /growth/i.test(s.schemeName),
+    );
   }, [activeSchemes, activeCategory]);
 
   // Reset category metric cache when category changes
@@ -560,20 +558,12 @@ function DashboardPage() {
             <div className="flex flex-wrap items-center gap-2">
               <BarChart2 className="h-4 w-4 text-cyan" />
               <h2 className="font-display text-base font-bold tracking-tight">Category Top 10</h2>
-              <span className="rounded-lg border border-border bg-surface px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
-                QF Score · Growth Plans Only
+              <span className="rounded-lg border border-cyan/30 bg-cyan/[0.07] px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-cyan">
+                QF Score · Direct Growth Only
               </span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Direct-Growth and Regular-Growth plans in the selected category, ranked by QuantFund Score.
-              <span className="ml-1 rounded bg-positive/15 px-1 py-0.5 font-mono text-[8px] uppercase tracking-wider text-positive">
-                Direct
-              </span>
-              {" "}= lower expense ratio.{" "}
-              <span className="rounded bg-amber-500/15 px-1 py-0.5 font-mono text-[8px] uppercase tracking-wider text-amber-400">
-                Regular
-              </span>
-              {" "}= distributor plan.
+              Direct-Growth plans only in the selected category, ranked by QuantFund Score. Regular, IDCW and other plan variants are excluded.
             </p>
           </div>
 
@@ -666,12 +656,8 @@ function DashboardPage() {
                                 <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
                                   {s.amc} · ₹{s.nav.toFixed(2)}
                                 </span>
-                                <span className={`rounded px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wider ${
-                                  s.badge === "direct"
-                                    ? "bg-positive/15 text-positive"
-                                    : "bg-amber-500/15 text-amber-400"
-                                }`}>
-                                  {s.badge === "direct" ? "Direct" : "Regular"}
+                                <span className="rounded px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wider bg-positive/15 text-positive">
+                                  Direct Growth
                                 </span>
                               </div>
                             </div>
