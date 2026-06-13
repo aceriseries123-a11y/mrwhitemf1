@@ -2,25 +2,28 @@
  * dashboard.tsx
  *
  * TABLE 1 — Overall Top 10 (Advanced cross-category score)
- *   Pool: ALL Direct-Growth schemes across 14 major categories.
- *   Each fund is percentile-ranked on 6 risk-adjusted factors before weighting,
- *   so debt and hybrid funds compete on equal footing with equity.
- *   Factors: Sharpe 28% · Sortino 22% · Calmar 20% · CAGR3Y 15% · Rolling+ 10% · MaxDD 5%
+ *   Pool: ALL Direct-Growth schemes across EVERY recognised AMFI category.
+ *   No per-category or total cap. Each fund's metrics are memoised so the
+ *   percentile recomputation on each new arrival is O(n), not O(n²).
+ *   6 factors, all percentile-ranked within the full loaded pool:
+ *     Sharpe 28 · Sortino 22 · Calmar 20 · CAGR3Y 15 · Rolling+ 10 · MaxDD 5
  *
  * TABLE 2 — Category Top 10 (QuantFund Score within category)
- *   Pool: ALL Direct-Growth schemes in the selected category.
- *   No count cap. Rankings update progressively as NAV data loads.
+ *   Pool: ALL active Growth plans (Direct + Regular) in the selected category.
+ *   No count cap. Direct plans are badged for clarity.
  */
 
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import {
   AlertCircle, Loader2, Info, TrendingUp, Layers,
   CheckCircle2, Star, BarChart2, Activity, Medal,
 } from "lucide-react";
 import { useAMFISchemes, filterActiveSchemes, type AMFIScheme } from "../lib/live-data";
-import { classifyAMFICategory, type QuantFundCategory } from "../lib/categories";
+import {
+  classifyAMFICategory, QUANTFUND_CATEGORIES, type QuantFundCategory,
+} from "../lib/categories";
 import { fetchNavHistory } from "../lib/nav-history";
 import {
   computeFundMetrics, quantFundScore, calmarRatio,
@@ -37,10 +40,10 @@ export const Route = createFileRoute("/dashboard")({
       {
         name: "description",
         content:
-          "Advanced cross-category fund rankings with a 6-factor percentile-normalised score plus per-category top-10 leaderboards using all AMFI schemes.",
+          "Full-universe fund rankings — all AMFI Direct-Growth schemes across every category, scored with a 6-factor percentile-normalised Advanced Score.",
       },
       { property: "og:title", content: "Dashboard — QuantFund" },
-      { property: "og:description", content: "Full-universe quant rankings computed from real NAV history." },
+      { property: "og:description", content: "Full-universe quant rankings from real NAV history." },
       { property: "og:url", content: "https://mrwhitemf1.lovable.app/dashboard" },
     ],
     links: [{ rel: "canonical", href: "https://mrwhitemf1.lovable.app/dashboard" }],
@@ -49,61 +52,30 @@ export const Route = createFileRoute("/dashboard")({
 });
 
 // ─── Pool config ──────────────────────────────────────────────────────────────
-// All Direct-Growth schemes from these categories feed the overall ranking pool.
-// No per-category count cap — every eligible scheme participates.
-// Safety cap: 500 total parallel NAV fetches (browser connection queue handles it).
+// Every recognised AMFI category (excluding "Unknown") participates in the
+// overall pool. No count cap — every Direct-Growth scheme in every category
+// is fetched and scored.
 
-const OVERALL_POOL_CATEGORIES: QuantFundCategory[] = [
-  // Equity
-  "Large Cap",
-  "Mid Cap",
-  "Small Cap",
-  "Flexi Cap",
-  "Multi Cap",
-  "Large & Mid Cap",
-  "ELSS",
-  "Focused",
-  // Hybrid
-  "Aggressive Hybrid",
-  "Balanced Advantage",
-  "Conservative Hybrid",
-  // Debt
-  "Short Duration",
-  "Corporate Bond",
-  "Banking & PSU",
-  "Gilt",
-];
+const OVERALL_POOL_CATEGORIES = QUANTFUND_CATEGORIES.filter(
+  (c) => c !== "Unknown",
+) as QuantFundCategory[];
 
-const OVERALL_MAX = 500; // safety cap on total NAV fetches
-
-// Category pills for table 2 — all major categories
+// Category picker tabs — all recognised categories
 const CAT_TABS: QuantFundCategory[] = [
-  "Large Cap",
-  "Mid Cap",
-  "Small Cap",
-  "Flexi Cap",
-  "Multi Cap",
-  "Large & Mid Cap",
-  "ELSS",
-  "Focused",
-  "Sectoral / Thematic",
-  "Aggressive Hybrid",
-  "Balanced Advantage",
-  "Conservative Hybrid",
-  "Multi Asset",
-  "Liquid",
-  "Ultra Short Duration",
-  "Low Duration",
-  "Short Duration",
-  "Medium Duration",
-  "Corporate Bond",
-  "Banking & PSU",
-  "Gilt",
-  "Dynamic Bond",
-  "Credit Risk",
-  "Index Fund",
-  "International / FoF",
-  "Gold",
+  // Equity
+  "Large Cap", "Mid Cap", "Small Cap", "Flexi Cap", "Multi Cap", "Large & Mid Cap",
+  "ELSS", "Focused", "Sectoral / Thematic", "Dividend Yield",
+  // Hybrid
+  "Aggressive Hybrid", "Balanced Advantage", "Conservative Hybrid", "Arbitrage", "Multi Asset",
+  // Debt
+  "Liquid", "Overnight", "Ultra Short Duration", "Low Duration", "Short Duration",
+  "Medium Duration", "Medium to Long Duration", "Long Duration",
+  "Dynamic Bond", "Corporate Bond", "Credit Risk", "Banking & PSU",
+  "Gilt", "Gilt 10Y", "Floater", "Money Market",
+  // Index / ETF
+  "Index Fund", "ETF",
+  // International / Gold / Solution
+  "International / FoF", "Gold", "Retirement", "Children",
 ];
 
 const TOP_N = 10;
@@ -112,12 +84,18 @@ const TOP_N = 10;
 
 type PoolEntry = AMFIScheme & { poolCategory: QuantFundCategory };
 
-interface ScoredOverall extends PoolFundData {
+interface CachedMetrics {
+  metrics: FundMetrics;
+  calmar: number | null;
+}
+
+interface ScoredOverall extends CachedMetrics {
   scheme: PoolEntry;
   advScore: number | null;
 }
 
 interface CatRow extends AMFIScheme {
+  isDirect: boolean;
   score: number | null;
   ret1y: number | null;
   cagr3y: number | null;
@@ -134,7 +112,7 @@ function tone(v: number | null): string {
 
 function InfoTip({ text }: { text: string }) {
   return (
-    <span className="group/tip relative ml-1 inline-flex" role="tooltip" aria-label={text}>
+    <span className="group/tip relative ml-1 inline-flex align-middle" role="tooltip" aria-label={text}>
       <Info className="h-3 w-3 cursor-help text-muted-foreground" aria-hidden="true" />
       <span className="pointer-events-none absolute right-0 top-4 z-30 hidden w-72 rounded-xl border border-border bg-surface p-3 text-[10px] normal-case leading-relaxed tracking-normal text-foreground shadow-2xl group-hover/tip:block">
         {text}
@@ -154,19 +132,19 @@ function ScoreBar({ value }: { value: number | null }) {
   );
 }
 
-function ProgressBar({ loaded, total, label }: { loaded: number; total: number; label: string }) {
+function ProgressBar({
+  loaded, total, label,
+}: { loaded: number; total: number; label: string }) {
   const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
   const done = loaded === total && total > 0;
   return (
     <div className="mb-3 rounded-xl border border-border bg-surface/60 px-4 py-3">
       <div className="mb-1.5 flex items-center justify-between">
         <span className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-          {done ? (
-            <CheckCircle2 className="h-3 w-3 text-positive" />
-          ) : (
-            <Loader2 className="h-3 w-3 animate-spin text-cyan" />
-          )}
-          {label} — {loaded}/{total} loaded
+          {done
+            ? <CheckCircle2 className="h-3 w-3 text-positive" />
+            : <Loader2 className="h-3 w-3 animate-spin text-cyan" />}
+          {label} — {loaded.toLocaleString()} / {total.toLocaleString()} loaded
         </span>
         <span className="font-mono text-[10px] text-muted-foreground">{pct}%</span>
       </div>
@@ -178,7 +156,7 @@ function ProgressBar({ loaded, total, label }: { loaded: number; total: number; 
       </div>
       {!done && loaded > 0 && (
         <p className="mt-1.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-          Ranking updates as each fund loads — final order may shift
+          Ranking updates live as each fund loads — final order stabilises when complete
         </p>
       )}
     </div>
@@ -191,27 +169,35 @@ function DashboardPage() {
   const { data: allSchemes, isLoading, isError, error } = useAMFISchemes();
   const [activeCategory, setActiveCategory] = useState<QuantFundCategory>("Large Cap");
 
+  // Per-fund metric cache — avoids recomputing on every render as pool grows.
+  // Key: schemeCode  Value: { metrics, calmar }
+  const overallMetricCache = useRef<Map<string, CachedMetrics>>(new Map());
+  const catMetricCache     = useRef<Map<string, CachedMetrics>>(new Map());
+
   const activeSchemes = useMemo(
     () => (allSchemes ? filterActiveSchemes(allSchemes) : []),
     [allSchemes],
   );
 
-  // ── Overall pool — ALL Direct-Growth from 15 major categories ─────────────
+  // ── Overall pool ─────────────────────────────────────────────────────────
+  // All Direct-Growth schemes across every AMFI category. No count cap.
 
   const overallCandidates = useMemo((): PoolEntry[] => {
     if (!activeSchemes.length) return [];
-    const all: PoolEntry[] = OVERALL_POOL_CATEGORIES.flatMap((category) => {
+
+    return OVERALL_POOL_CATEGORIES.flatMap((category) => {
       const inCat = activeSchemes.filter(
         (s) => classifyAMFICategory(s.category) === category,
       );
-      // Prefer Direct-Growth; fall back to all if fewer than 5 direct schemes
-      const direct = inCat.filter(
-        (s) => /direct/i.test(s.schemeName) && /growth/i.test(s.schemeName),
+      // Prefer Direct-Growth; fall back to all Growth if < 3 direct exist
+      const directGrowth = inCat.filter(
+        (s) =>
+          /direct/i.test(s.schemeName) &&
+          (/growth/i.test(s.schemeName) || /idcw.*reinvest/i.test(s.schemeName)),
       );
-      const pool = direct.length >= 5 ? direct : inCat;
+      const pool = directGrowth.length >= 3 ? directGrowth : inCat;
       return pool.map((s) => ({ ...s, poolCategory: category }));
     });
-    return all.slice(0, OVERALL_MAX);
   }, [activeSchemes]);
 
   const overallNavQ = useQueries({
@@ -223,19 +209,30 @@ function DashboardPage() {
     })),
   });
 
-  const overallLoaded = overallNavQ.filter((q) => q.data).length;
-  const overallTotal  = overallNavQ.length;
-  const overallDone   = overallLoaded === overallTotal && overallTotal > 0;
+  const overallLoaded = useMemo(
+    () => overallNavQ.filter((q) => !!q.data).length,
+    [overallNavQ],
+  );
+  const overallTotal = overallNavQ.length;
+  const overallDone  = overallLoaded === overallTotal && overallTotal > 0;
 
-  // Rank progressively — re-sorts on every query completion
+  // Progressively ranked. Metrics are cached per-fund so each recompute is
+  // O(n) (percentile sort) not O(n × navLen).
   const overallRanked = useMemo((): ScoredOverall[] => {
     const pool: ScoredOverall[] = [];
 
     overallCandidates.forEach((s, i) => {
       const history = overallNavQ[i]?.data;
       if (!history) return;
-      const metrics = computeFundMetrics(history.series);
-      pool.push({ scheme: s, metrics, calmar: calmarRatio(metrics), advScore: null });
+
+      let cached = overallMetricCache.current.get(s.schemeCode);
+      if (!cached) {
+        const metrics = computeFundMetrics(history.series);
+        cached = { metrics, calmar: calmarRatio(metrics) };
+        overallMetricCache.current.set(s.schemeCode, cached);
+      }
+
+      pool.push({ scheme: s, ...cached, advScore: null });
     });
 
     if (pool.length < 3) return [];
@@ -244,23 +241,33 @@ function DashboardPage() {
       ...f,
       advScore: advancedPoolScore(f, pool),
     }));
-
     scored.sort((a, b) => (b.advScore ?? -1) - (a.advScore ?? -1));
     return scored.slice(0, TOP_N);
   }, [overallCandidates, overallNavQ]);
 
-  // ── Category pool — ALL Direct-Growth in selected category ───────────────
+  // ── Category pool ────────────────────────────────────────────────────────
+  // ALL active Growth plans (Direct + Regular) in the selected category.
+  // No count cap. Direct plans are badged in the table.
 
   const catCandidates = useMemo((): AMFIScheme[] => {
     const inCat = activeSchemes.filter(
       (s) => classifyAMFICategory(s.category) === activeCategory,
     );
-    const direct = inCat.filter(
-      (s) => /direct/i.test(s.schemeName) && /growth/i.test(s.schemeName),
+    // Prefer growth-only plans; fall back to all if very few
+    const growth = inCat.filter(
+      (s) =>
+        /growth/i.test(s.schemeName) ||
+        /idcw.*reinvest/i.test(s.schemeName),
     );
-    // Use direct-growth if we have at least 5; otherwise use all
-    return direct.length >= 5 ? direct : inCat;
+    return growth.length >= 3 ? growth : inCat;
   }, [activeSchemes, activeCategory]);
+
+  // Reset category metric cache when category changes
+  const prevCat = useRef<QuantFundCategory | null>(null);
+  if (prevCat.current !== activeCategory) {
+    catMetricCache.current.clear();
+    prevCat.current = activeCategory;
+  }
 
   const catNavQ = useQueries({
     queries: catCandidates.map((s) => ({
@@ -271,36 +278,48 @@ function DashboardPage() {
     })),
   });
 
-  const catLoaded = catNavQ.filter((q) => q.data).length;
-  const catTotal  = catNavQ.length;
-  const catDone   = catLoaded === catTotal && catTotal > 0;
+  const catLoaded = useMemo(
+    () => catNavQ.filter((q) => !!q.data).length,
+    [catNavQ],
+  );
+  const catTotal = catNavQ.length;
+  const catDone  = catLoaded === catTotal && catTotal > 0;
 
   const catRanked = useMemo((): CatRow[] => {
     const rows: CatRow[] = catCandidates.map((s, i) => {
-      const history = catNavQ[i]?.data;
+      const isDirect = /direct/i.test(s.schemeName);
+      const history  = catNavQ[i]?.data;
       if (!history) {
-        return { ...s, score: null, ret1y: null, cagr3y: null, sharpe: null, maxDD: null };
+        return { ...s, isDirect, score: null, ret1y: null, cagr3y: null, sharpe: null, maxDD: null };
       }
-      const m = computeFundMetrics(history.series);
+
+      let cached = catMetricCache.current.get(s.schemeCode);
+      if (!cached) {
+        const metrics = computeFundMetrics(history.series);
+        cached = { metrics, calmar: calmarRatio(metrics) };
+        catMetricCache.current.set(s.schemeCode, cached);
+      }
+
+      const m = cached.metrics;
       return {
         ...s,
-        score: quantFundScore(m),
-        ret1y: m.ret1y,
+        isDirect,
+        score:  quantFundScore(m),
+        ret1y:  m.ret1y,
         cagr3y: m.cagr3y,
         sharpe: m.sharpe,
-        maxDD: m.maxDrawdown,
+        maxDD:  m.maxDrawdown,
       };
     });
     rows.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
     return rows.slice(0, TOP_N);
   }, [catCandidates, catNavQ]);
 
-  // ── KPI strip ─────────────────────────────────────────────────────────────
-
-  const topAdvScore = overallRanked[0]?.advScore ?? null;
-  const topCatScore = catRanked[0]?.score ?? null;
+  // ── KPI strip ────────────────────────────────────────────────────────────
+  const topAdvScore  = overallRanked[0]?.advScore ?? null;
+  const topCatScore  = catRanked[0]?.score ?? null;
   const universeSize = activeSchemes.length;
-  const asOf = allSchemes?.[0]?.date ?? null;
+  const asOf         = allSchemes?.[0]?.date ?? null;
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -337,47 +356,53 @@ function DashboardPage() {
     <AppShell title="Dashboard">
       <div className="mx-auto max-w-6xl space-y-8">
 
-        {/* ── Page header ────────────────────────────────────────────────── */}
+        {/* ── Page header ──────────────────────────────────────────────── */}
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="font-display text-2xl font-bold tracking-tight">Dashboard</h1>
             <p className="mt-1 font-mono text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              {universeSize.toLocaleString()} active schemes · full-universe rankings
+              {universeSize.toLocaleString()} active Growth schemes ·{" "}
+              {overallCandidates.length.toLocaleString()} in overall pool ·{" "}
+              {OVERALL_POOL_CATEGORIES.length} categories
             </p>
           </div>
           <DataSourceBadge source="AMFI + mfapi.in" asOf={asOf}
             note="NAV data updates once daily after market close." />
         </div>
 
-        {/* ── KPI strip ──────────────────────────────────────────────────── */}
+        {/* ── KPI strip ────────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <KpiTile icon={Layers} label="Universe" value={universeSize.toLocaleString()} />
-          <KpiTile icon={Activity} label="Pool size"
-            value={overallTotal.toLocaleString()}
-            suffix={`${OVERALL_POOL_CATEGORIES.length} cats`} />
-          <KpiTile icon={Star} label="Top adv. score"
+          <KpiTile icon={Layers}   label="Active schemes"  value={universeSize.toLocaleString()} />
+          <KpiTile icon={Activity} label="Pool / scored"
+            value={`${overallLoaded.toLocaleString()} / ${overallTotal.toLocaleString()}`}
+            sub={`${OVERALL_POOL_CATEGORIES.length} cats`} />
+          <KpiTile icon={Star}     label="Top adv. score"
             value={topAdvScore != null ? fmtNum(topAdvScore, 1) : "—"} tone="cyan" />
           <KpiTile icon={TrendingUp} label="Top cat. score"
             value={topCatScore != null ? fmtNum(topCatScore, 1) : "—"} tone="cyan" />
         </div>
 
-        {/* ════════════════════════════════════════════════════════════════ */}
-        {/* TABLE 1 — Overall Top 10                                        */}
-        {/* ════════════════════════════════════════════════════════════════ */}
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {/* TABLE 1 — Overall Top 10                                      */}
+        {/* ══════════════════════════════════════════════════════════════ */}
 
         <section>
           <div className="mb-3">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Medal className="h-4 w-4 text-cyan" />
               <h2 className="font-display text-base font-bold tracking-tight">Overall Top 10</h2>
               <span className="rounded-lg border border-cyan/30 bg-cyan/[0.07] px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-cyan">
-                Advanced Score · All Categories
+                Advanced Score · All {OVERALL_POOL_CATEGORIES.length} Categories
               </span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              All Direct-Growth schemes from {OVERALL_POOL_CATEGORIES.length} major categories, percentile-ranked on 6 risk-adjusted
-              factors so debt, hybrid and equity funds compete on equal footing.
-              <InfoTip text="Advanced Score = Sharpe (28%) + Sortino (22%) + Calmar = CAGR3Y/|MaxDD| (20%) + 3Y CAGR (15%) + Rolling Positive % (10%) + Max Drawdown (5%). Every factor is percentile-ranked within the entire loaded pool. A Gilt fund with excellent Sharpe can legitimately rank above a volatile Small Cap fund." />
+              Every Direct-Growth scheme across all {OVERALL_POOL_CATEGORIES.length} AMFI fund categories —
+              {" "}{overallCandidates.toLocaleString !== undefined
+                ? overallCandidates.length.toLocaleString()
+                : overallCandidates.length} funds in pool.
+              Each fund is percentile-ranked on 6 risk-adjusted factors so debt, hybrid and
+              equity funds compete on equal footing.
+              <InfoTip text="Advanced Score = Sharpe (28%) + Sortino (22%) + Calmar = CAGR3Y/|MaxDD| (20%) + 3Y CAGR (15%) + Rolling 1Y Positive % (10%) + Max Drawdown (5%). Every factor is percentile-ranked within the entire loaded pool before weighting." />
             </p>
           </div>
 
@@ -400,11 +425,10 @@ function DashboardPage() {
             ))}
           </div>
 
-          {/* Loading progress */}
           <ProgressBar
             loaded={overallLoaded}
             total={overallTotal}
-            label={`Overall pool (${OVERALL_POOL_CATEGORIES.length} categories)`}
+            label={`Overall pool · ${OVERALL_POOL_CATEGORIES.length} categories`}
           />
 
           <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
@@ -412,7 +436,7 @@ function DashboardPage() {
               <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin text-cyan" />
                 <p className="font-mono text-[11px] uppercase tracking-widest">
-                  Scoring cross-category pool — {overallLoaded} / {overallTotal} loaded…
+                  Scoring full pool — {overallLoaded}/{overallTotal} loaded…
                 </p>
               </div>
             ) : (
@@ -425,7 +449,7 @@ function DashboardPage() {
                       <th className="p-3 font-medium">Category</th>
                       <th className="p-3 text-right font-medium">
                         Adv. Score
-                        <InfoTip text="0–100 percentile score, relative to all loaded schemes in the pool. Scores shift as more funds load and the percentile distribution widens." />
+                        <InfoTip text="0–100, percentile-relative to all loaded schemes. Scores shift as the pool grows — final ranking is stable once all funds are loaded." />
                       </th>
                       <th className="p-3 text-right font-medium">Sharpe</th>
                       <th className="p-3 text-right font-medium">Sortino</th>
@@ -500,49 +524,53 @@ function DashboardPage() {
               </div>
             )}
 
-            <div className="flex items-center justify-between border-t border-border bg-background/40 px-4 py-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-background/40 px-4 py-2.5">
               <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-                {overallLoaded} of {overallTotal} schemes scored · top {TOP_N} shown · {OVERALL_POOL_CATEGORIES.length} categories
+                {overallLoaded.toLocaleString()} of {overallTotal.toLocaleString()} schemes scored ·
+                top {TOP_N} shown · {OVERALL_POOL_CATEGORIES.length} categories
               </span>
               {overallDone ? (
                 <span className="flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-wider text-positive">
-                  <CheckCircle2 className="h-3 w-3" /> Complete
+                  <CheckCircle2 className="h-3 w-3" /> All scored · final ranking
                 </span>
               ) : (
-                <span className="font-mono text-[9px] text-muted-foreground">
-                  Updating…
+                <span className="flex items-center gap-1.5 font-mono text-[9px] text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Partial ranking — updating…
                 </span>
               )}
             </div>
           </div>
 
           <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
-            Advanced Score is <span className="text-foreground">percentile-based</span> — a score of 85 means this fund outranks ~85% of the
-            entire pool on the weighted composite. Scores shift as more funds load into the pool.
-            Cross-category raw-return comparison is invalid; this score uses risk-adjusted ratios (Sharpe, Sortino, Calmar) that are category-neutral.
+            Advanced Score is <span className="text-foreground">percentile-relative</span> — a score of 85
+            means this fund outranks ~85% of the entire pool on the weighted composite.
+            Scores shift until all {overallTotal} funds are loaded; final order is stable after that.
           </p>
         </section>
 
-        {/* ════════════════════════════════════════════════════════════════ */}
-        {/* TABLE 2 — Category Top 10                                       */}
-        {/* ════════════════════════════════════════════════════════════════ */}
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {/* TABLE 2 — Category Top 10                                     */}
+        {/* ══════════════════════════════════════════════════════════════ */}
 
         <section>
           <div className="mb-3">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <BarChart2 className="h-4 w-4 text-cyan" />
               <h2 className="font-display text-base font-bold tracking-tight">Category Top 10</h2>
               <span className="rounded-lg border border-border bg-surface px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
-                QF Score · All Schemes
+                QF Score · All Plans
               </span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Every Direct-Growth scheme in the selected category, ranked by QuantFund Score.
-              Switch category to re-load the full set instantly (React Query cache).
+              All Growth plans (Direct + Regular) in the selected category, ranked by QuantFund Score.
+              <span className="ml-1 rounded bg-cyan/10 px-1 py-0.5 font-mono text-[8px] uppercase tracking-wider text-cyan">
+                Direct
+              </span>
+              {" "}badge marks Direct plans (lower expense ratio).
             </p>
           </div>
 
-          {/* Category pills — scrollable */}
+          {/* Category pills — all 34 categories */}
           <div className="no-scrollbar mb-4 flex gap-2 overflow-x-auto pb-1">
             {CAT_TABS.map((cat) => {
               const count = activeSchemes.filter(
@@ -550,8 +578,7 @@ function DashboardPage() {
               ).length;
               if (count === 0) return null;
               return (
-                <button key={cat}
-                  onClick={() => setActiveCategory(cat)}
+                <button key={cat} onClick={() => setActiveCategory(cat)}
                   className={`shrink-0 rounded-lg px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-widest transition-all duration-150 ${
                     cat === activeCategory
                       ? "bg-cyan text-background shadow-[0_0_14px_rgba(34,211,238,0.3)]"
@@ -564,20 +591,20 @@ function DashboardPage() {
             })}
           </div>
 
-          {/* Loading progress for category */}
           <ProgressBar
             loaded={catLoaded}
             total={catTotal}
-            label={`${activeCategory} (all ${catTotal} schemes)`}
+            label={`${activeCategory} · all ${catTotal} plans`}
           />
 
           <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
+            {/* Sub-header */}
             <div className="flex items-center justify-between border-b border-border bg-background/60 px-4 py-3">
               <span className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-cyan">
                 {activeCategory} · Top {TOP_N}
               </span>
               <span className="font-mono text-[9px] text-muted-foreground">
-                {catCandidates.length} schemes in pool
+                {catCandidates.length} plans in pool
               </span>
             </div>
 
@@ -585,7 +612,7 @@ function DashboardPage() {
               <div className="py-16 text-center font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
                 No schemes found in {activeCategory}
               </div>
-            ) : catRanked.length === 0 ? (
+            ) : catRanked.filter((r) => r.score !== null).length === 0 ? (
               <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin text-cyan" />
                 <p className="font-mono text-[11px] uppercase tracking-widest">
@@ -601,7 +628,7 @@ function DashboardPage() {
                       <th className="p-3 font-medium">Scheme</th>
                       <th className="p-3 text-right font-medium">
                         QF Score
-                        <InfoTip text="QuantFund Score: CAGR3Y (35%) + Sharpe (25%) + Max Drawdown (20%) + Rolling 1Y Positive % (20%). Only valid within the same category." />
+                        <InfoTip text="CAGR3Y (35%) + Sharpe (25%) + Max Drawdown (20%) + Rolling 1Y Positive % (20%). Valid within a single category only." />
                       </th>
                       <th className="p-3 text-right font-medium">1Y Ret</th>
                       <th className="p-3 text-right font-medium">3Y CAGR</th>
@@ -615,20 +642,32 @@ function DashboardPage() {
                       return (
                         <tr key={s.schemeCode}
                           className={`transition-colors hover:bg-cyan/[0.05] ${isTop3 ? "bg-cyan/[0.025]" : ""}`}>
+
                           <td className="p-3 font-mono text-[11px] font-bold tabular-nums">
                             <span className={isTop3 ? "text-cyan" : "text-muted-foreground"}>
                               {String(idx + 1).padStart(2, "0")}
                             </span>
                           </td>
+
                           <td className="p-3">
-                            <Link to="/fund/$id" params={{ id: s.schemeCode }}
-                              className="block max-w-[300px] text-[12px] font-semibold leading-snug text-foreground transition-colors hover:text-cyan">
-                              {s.schemeName}
-                            </Link>
-                            <p className="mt-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-                              {s.amc} · ₹{s.nav.toFixed(2)}
-                            </p>
+                            <div className="flex max-w-[300px] flex-col gap-0.5">
+                              <Link to="/fund/$id" params={{ id: s.schemeCode }}
+                                className="text-[12px] font-semibold leading-snug text-foreground transition-colors hover:text-cyan">
+                                {s.schemeName}
+                              </Link>
+                              <div className="flex flex-wrap items-center gap-1">
+                                <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                                  {s.amc} · ₹{s.nav.toFixed(2)}
+                                </span>
+                                {s.isDirect && (
+                                  <span className="rounded bg-cyan/10 px-1 py-0.5 font-mono text-[8px] uppercase tracking-wider text-cyan">
+                                    Direct
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                           </td>
+
                           <td className="p-3 text-right">
                             {s.score != null ? (
                               <div className="inline-flex flex-col items-end gap-1">
@@ -637,12 +676,11 @@ function DashboardPage() {
                                 </span>
                                 <ScoreBar value={s.score} />
                               </div>
-                            ) : catNavQ[idx]?.isLoading ? (
-                              <Loader2 className="ml-auto h-3 w-3 animate-spin text-muted-foreground" />
                             ) : (
-                              <span className="font-mono text-[10px] text-muted-foreground">—</span>
+                              <Loader2 className="ml-auto h-3 w-3 animate-spin text-muted-foreground" />
                             )}
                           </td>
+
                           <td className={`p-3 text-right font-mono text-[11px] font-bold tabular-nums ${tone(s.ret1y)}`}>
                             {fmtPct(s.ret1y, { signed: true })}
                           </td>
@@ -663,9 +701,10 @@ function DashboardPage() {
               </div>
             )}
 
-            <div className="flex items-center justify-between border-t border-border bg-background/40 px-4 py-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-background/40 px-4 py-2.5">
               <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-                {catLoaded}/{catTotal} loaded · top {TOP_N} shown
+                {catLoaded}/{catTotal} plans loaded · top {TOP_N} shown
+                {catDone && ` · final ranking`}
               </span>
               <Link to="/rankings"
                 className="font-mono text-[9px] uppercase tracking-wider text-cyan transition-colors hover:text-cyan/80">
@@ -675,8 +714,9 @@ function DashboardPage() {
           </div>
 
           <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
-            <span className="text-foreground">QuantFund Score</span> is within-category only — not valid across categories.
-            Data: <a href="https://www.amfiindia.com" target="_blank" rel="noopener noreferrer"
+            <span className="text-foreground">QuantFund Score</span> is within-category only — not valid across
+            categories. Data:{" "}
+            <a href="https://www.amfiindia.com" target="_blank" rel="noopener noreferrer"
               className="text-cyan underline underline-offset-2">AMFI India</a>{" "}
             &{" "}
             <a href="https://www.mfapi.in" target="_blank" rel="noopener noreferrer"
@@ -692,12 +732,12 @@ function DashboardPage() {
 // ─── KPI Tile ─────────────────────────────────────────────────────────────────
 
 function KpiTile({
-  icon: Icon, label, value, suffix, tone,
+  icon: Icon, label, value, sub, tone,
 }: {
   icon: React.ElementType;
   label: string;
   value: string;
-  suffix?: string;
+  sub?: string;
   tone?: "positive" | "negative" | "cyan";
 }) {
   const valueClass =
@@ -710,19 +750,17 @@ function KpiTile({
     tone === "cyan"     ? "text-cyan"     : "text-muted-foreground";
 
   return (
-    <div className="rounded-xl border border-border bg-surface p-4 transition-colors hover:bg-surface-elevated">
+    <div className="rounded-xl border border-border bg-surface p-4">
       <div className="mb-3 flex items-center justify-between">
         <p className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">{label}</p>
         <Icon className={`h-3.5 w-3.5 opacity-70 ${iconClass}`} aria-hidden="true" />
       </div>
       <p className={`font-display text-xl font-bold tabular-nums ${valueClass}`}>
         {value}
-        {suffix && (
-          <span className="ml-1.5 font-mono text-[9px] font-medium uppercase tracking-widest text-muted-foreground">
-            {suffix}
-          </span>
-        )}
       </p>
+      {sub && (
+        <p className="mt-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">{sub}</p>
+      )}
     </div>
   );
 }
