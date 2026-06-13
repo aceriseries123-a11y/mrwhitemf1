@@ -1,9 +1,11 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
   LayoutDashboard, Search, GitCompare, Briefcase, Filter,
-  History, Sparkles, Trophy, Settings, Activity, Menu, Bell, X,
+  History, FlaskConical, Trophy, Settings, Activity, Menu, Bell, X,
+  TrendingUp, TrendingDown, Minus,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { useMarketTicks, type MarketTick } from "@/lib/market-ticks";
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -12,10 +14,82 @@ const NAV = [
   { to: "/portfolio", label: "Portfolio Analyzer", icon: Briefcase },
   { to: "/screener", label: "Screener", icon: Filter },
   { to: "/backtest", label: "Backtesting", icon: History },
-  { to: "/research-desk", label: "Research Desk", icon: Sparkles },
+  { to: "/research-desk", label: "Research Desk", icon: FlaskConical },
   { to: "/rankings", label: "Rankings", icon: Trophy },
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
+
+function TickerItem({ tick }: { tick: MarketTick }) {
+  const chg = tick.chg;
+  const isPos = chg != null && chg > 0;
+  const isNeg = chg != null && chg < 0;
+  const chgClass = isPos ? "text-positive" : isNeg ? "text-negative" : "text-muted-foreground";
+  const Icon = isPos ? TrendingUp : isNeg ? TrendingDown : Minus;
+
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1.5 px-3 border-r border-border last:border-r-0">
+      <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{tick.label}</span>
+      <span className="font-mono text-[11px] font-bold tabular-nums text-foreground">
+        {tick.nav != null ? tick.nav.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—"}
+      </span>
+      {chg != null ? (
+        <span className={`inline-flex items-center gap-0.5 font-mono text-[10px] font-medium tabular-nums ${chgClass}`}>
+          <Icon className="h-2.5 w-2.5" />
+          {isPos ? "+" : ""}{chg.toFixed(2)}%
+        </span>
+      ) : (
+        <span className="font-mono text-[10px] text-muted-foreground">—</span>
+      )}
+    </span>
+  );
+}
+
+function MarketTickerBar() {
+  const { data, isError, isLoading } = useMarketTicks();
+
+  if (isLoading) {
+    return (
+      <div className="flex h-7 items-center border-b border-border bg-surface/60 px-4">
+        <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground animate-pulse">
+          Loading market data…
+        </span>
+      </div>
+    );
+  }
+
+  if (isError || !data) {
+    return (
+      <div className="flex h-7 items-center border-b border-border bg-surface/60 px-4 gap-2">
+        <span className="h-1.5 w-1.5 rounded-full bg-warning" />
+        <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+          Market data unavailable · Source: Yahoo Finance
+        </span>
+      </div>
+    );
+  }
+
+  const asOf = data.find((t) => t.date)?.date;
+  const asOfLabel = asOf
+    ? new Date(asOf).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" })
+    : null;
+
+  return (
+    <div className="flex h-7 items-center overflow-x-auto border-b border-border bg-surface/60 no-scrollbar">
+      <span className="flex shrink-0 items-center gap-1.5 border-r border-border px-3">
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-positive" />
+        <span className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground">Live</span>
+      </span>
+      {data.map((tick) => (
+        <TickerItem key={tick.label} tick={tick} />
+      ))}
+      {asOfLabel && (
+        <span className="ml-auto shrink-0 border-l border-border px-3 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+          {asOfLabel} IST · Yahoo Finance
+        </span>
+      )}
+    </div>
+  );
+}
 
 export function AppShell({ children, title }: { children: ReactNode; title?: string }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
@@ -39,15 +113,16 @@ export function AppShell({ children, title }: { children: ReactNode; title?: str
             return (
               <Link key={to} to={to} onClick={() => setOpen(false)}
                 className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
-                <Icon className="h-4 w-4" /> {label}
+                <Icon className="h-4 w-4 shrink-0" /> {label}
                 {active && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-cyan" />}
               </Link>
             );
           })}
         </nav>
         <div className="absolute inset-x-3 bottom-3 rounded-xl border border-border bg-card/60 p-3 text-xs">
-          <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">Data source</div>
-          <div className="flex items-center gap-2"><span className="h-2 w-2 animate-pulse rounded-full bg-positive" /> AMFI · mfapi.in</div>
+          <div className="mb-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">Data sources</div>
+          <div className="flex items-center gap-2 mb-1"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-positive" /><span className="text-foreground">AMFI · mfapi.in</span></div>
+          <div className="flex items-center gap-2"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-positive" /><span className="text-foreground">Yahoo Finance</span></div>
         </div>
       </aside>
 
@@ -65,6 +140,7 @@ export function AppShell({ children, title }: { children: ReactNode; title?: str
           <button className="grid h-8 w-8 place-items-center rounded-lg border border-border bg-surface" aria-label="Notifications"><Bell className="h-4 w-4"/></button>
           <div className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-primary to-cyan font-mono text-xs font-bold text-primary-foreground" aria-hidden="true">QF</div>
         </header>
+        <MarketTickerBar />
         <main className="p-4 md:p-6">{children}</main>
       </div>
     </div>
