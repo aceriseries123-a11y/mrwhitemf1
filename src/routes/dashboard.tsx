@@ -14,8 +14,8 @@
  */
 
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useRef, useState } from "react";
-import { useQuery, useQueries } from "@tanstack/react-query";
+import { useMemo, useRef, useState, useEffect } from "react";
+import { useQueries } from "@tanstack/react-query";
 import {
   AlertCircle, Loader2, Info, TrendingUp, Layers,
   CheckCircle2, Star, BarChart2, Activity, Medal,
@@ -24,7 +24,7 @@ import { useAMFISchemes, filterActiveSchemes, type AMFIScheme } from "../lib/liv
 import {
   classifyAMFICategory, QUANTFUND_CATEGORIES, type QuantFundCategory,
 } from "../lib/categories";
-import { fetchNavHistoryBatch, type NavHistory } from "../lib/nav-history";
+import { fetchNavHistory, type NavHistory } from "../lib/nav-history";
 import {
   computeFundMetrics, quantFundScore, calmarRatio,
   advancedPoolScore, type FundMetrics, type PoolFundData,
@@ -80,6 +80,12 @@ const CAT_TABS: QuantFundCategory[] = [
 
 const TOP_N = 10;
 
+// LocalStorage key — includes today's date so metrics auto-expire daily
+// (AMFI NAV publishes once daily so yesterday's metrics are still valid,
+// but using today's date keeps the key simple and predictable).
+const TODAY = new Date().toISOString().slice(0, 10);
+const LS_METRICS_KEY = `qf-metrics-v2-${TODAY}`;
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type PoolEntry = AMFIScheme & { poolCategory: QuantFundCategory };
@@ -113,12 +119,6 @@ function planBadge(name: string): PlanBadge {
   return /direct/i.test(name) ? "direct" : "regular";
 }
 
-function chunkArray<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
-
 function tone(v: number | null): string {
   if (v == null) return "text-muted-foreground";
   return v >= 0 ? "text-positive" : "text-negative";
@@ -147,8 +147,8 @@ function ScoreBar({ value }: { value: number | null }) {
 }
 
 function ProgressBar({
-  settled, loaded, failed, total, label,
-}: { settled: number; loaded: number; failed: number; total: number; label: string }) {
+  settled, loaded, total, label,
+}: { settled: number; loaded: number; total: number; label: string }) {
   const pct = total > 0 ? Math.round((settled / total) * 100) : 0;
   const done = settled === total && total > 0;
   return (
@@ -159,9 +159,6 @@ function ProgressBar({
             ? <CheckCircle2 className="h-3 w-3 text-positive" />
             : <Loader2 className="h-3 w-3 animate-spin text-cyan" />}
           {label} — {loaded.toLocaleString()} scored
-          {failed > 0 && (
-            <span className="text-negative">· {failed} unavailable</span>
-          )}
           <span className="opacity-60">/ {total.toLocaleString()} total</span>
         </span>
         <span className="font-mono text-[10px] text-muted-foreground">{pct}%</span>
@@ -174,7 +171,7 @@ function ProgressBar({
       </div>
       {!done && settled > 0 && (
         <p className="mt-1.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-          Ranking updates live — {settled}/{total} funds settled · server batch fetch
+          Ranking updates live · {settled}/{total} settled
         </p>
       )}
     </div>
@@ -188,9 +185,24 @@ function DashboardPage() {
   const [activeCategory, setActiveCategory] = useState<QuantFundCategory>("Large Cap");
 
   // Per-fund metric cache — avoids recomputing on every render as pool grows.
-  // Key: schemeCode  Value: { metrics, calmar }
   const overallMetricCache = useRef<Map<string, CachedMetrics>>(new Map());
   const catMetricCache     = useRef<Map<string, CachedMetrics>>(new Map());
+
+  // Load today's metrics from localStorage and prime the in-memory cache once.
+  // Funds primed from localStorage skip NAV fetching entirely on reload.
+  const lsPrimed = useRef(false);
+  const localMetrics = useMemo((): Record<string, CachedMetrics> => {
+    try {
+      const raw = localStorage.getItem(LS_METRICS_KEY);
+      return raw ? (JSON.parse(raw) as Record<string, CachedMetrics>) : {};
+    } catch { return {}; }
+  }, []);
+  if (!lsPrimed.current) {
+    for (const [code, cm] of Object.entries(localMetrics)) {
+      overallMetricCache.current.set(code, cm);
+    }
+    lsPrimed.current = true;
+  }
 
   const activeSchemes = useMemo(
     () => (allSchemes ? filterActiveSchemes(allSchemes) : []),
@@ -215,79 +227,74 @@ function DashboardPage() {
     });
   }, [activeSchemes]);
 
-  // ── Batch queries for the overall pool ───────────────────────────────────
-  // Splits codes into chunks of 100 → ~14 browser requests instead of 1,340.
-  // Each request goes to /api/public/nav-batch where the server fans out to
-  // mfapi.in with no connection-pool limit and caches results for 12 h.
+  // ── Overall pool — individual browser fetches with localStorage cache ────
+  // mfapi.in rate-limits server-side batch requests (shared CF Worker IP).
+  // Browser fetches with high concurrency (100) are reliable and fast.
+  // Computed metrics are cached in localStorage so reloads are instant.
 
-  const BATCH_SIZE = 100;
-  const overallBatches = useMemo(
-    () => chunkArray(overallCandidates.map((s) => s.schemeCode), BATCH_SIZE),
-    [overallCandidates],
+  // Skip fetching funds whose metrics are already in localStorage
+  const freshCandidates = useMemo(
+    () => overallCandidates.filter((s) => !localMetrics[s.schemeCode]),
+    [overallCandidates, localMetrics],
   );
 
-  const overallBatchQ = useQueries({
-    queries: overallBatches.map((batch, i) => ({
-      queryKey: ["nav-batch-overall", i, overallCandidates.length],
-      queryFn: () => fetchNavHistoryBatch(batch),
+  const overallNavQ = useQueries({
+    queries: freshCandidates.map((s) => ({
+      queryKey: ["nav-history", s.schemeCode],
+      queryFn: () => fetchNavHistory(s.schemeCode),
       staleTime: 12 * 60 * 60 * 1000,
       retry: 1,
     })),
   });
 
-  // Merge all batch results into a single lookup map
-  const overallNavMap = useMemo(() => {
-    const map = new Map<string, NavHistory | null>();
-    overallBatchQ.forEach((q) => {
-      if (q.data) {
-        for (const [code, history] of Object.entries(q.data)) {
-          map.set(code, history);
-        }
-      }
+  // Fast map of newly-fetched NAV history (fresh this session only)
+  const freshNavMap = useMemo(() => {
+    const map = new Map<string, NavHistory>();
+    freshCandidates.forEach((s, i) => {
+      const h = overallNavQ[i]?.data;
+      if (h) map.set(s.schemeCode, h);
     });
     return map;
-  }, [overallBatchQ]);
+  }, [freshCandidates, overallNavQ]);
 
-  // Progress: count funds whose batch has fully settled
-  const overallSettled = useMemo(
-    () =>
-      overallBatchQ.reduce((acc, q, i) => {
-        if (q.status === "success" || q.status === "error") {
-          return acc + (overallBatches[i]?.length ?? 0);
-        }
-        return acc;
-      }, 0),
-    [overallBatchQ, overallBatches],
+  // Progress — cached funds count as instantly settled
+  const cachedCount    = overallCandidates.length - freshCandidates.length;
+  const freshSettled   = useMemo(
+    () => overallNavQ.filter((q) => q.status === "success" || q.status === "error").length,
+    [overallNavQ],
   );
-  const overallLoaded = useMemo(
-    () =>
-      overallBatchQ.reduce((acc, q) => {
-        if (q.status === "success" && q.data) {
-          return acc + Object.values(q.data).filter((h) => h !== null).length;
-        }
-        return acc;
-      }, 0),
-    [overallBatchQ],
+  const freshLoaded    = useMemo(
+    () => overallNavQ.filter((q) => q.status === "success").length,
+    [overallNavQ],
   );
-  const overallFailed = overallSettled - overallLoaded;
-  const overallTotal  = overallCandidates.length;
-  const overallDone   = overallSettled === overallTotal && overallTotal > 0;
+  const overallSettled = cachedCount + freshSettled;
+  const overallLoaded  = cachedCount + freshLoaded;
+  const overallTotal   = overallCandidates.length;
+  const overallDone    = overallSettled === overallTotal && overallTotal > 0;
 
-  // Progressively ranked from whatever batches have arrived so far.
+  // Save all computed metrics to localStorage once loading finishes
+  useEffect(() => {
+    if (!overallDone || overallMetricCache.current.size === 0) return;
+    try {
+      const obj: Record<string, CachedMetrics> = {};
+      for (const [code, cm] of overallMetricCache.current) obj[code] = cm;
+      localStorage.setItem(LS_METRICS_KEY, JSON.stringify(obj));
+    } catch { /* quota exceeded — no-op */ }
+  }, [overallDone]);
+
+  // Progressively ranked from any combination of cached + freshly loaded metrics
   const overallRanked = useMemo((): ScoredOverall[] => {
     const pool: ScoredOverall[] = [];
 
     for (const s of overallCandidates) {
-      const history = overallNavMap.get(s.schemeCode);
-      if (!history) continue;
-
       let cached = overallMetricCache.current.get(s.schemeCode);
       if (!cached) {
+        const history = freshNavMap.get(s.schemeCode);
+        if (!history) continue;
         const metrics = computeFundMetrics(history.series);
         cached = { metrics, calmar: calmarRatio(metrics) };
         overallMetricCache.current.set(s.schemeCode, cached);
       }
-
       pool.push({ scheme: s, ...cached, advScore: null });
     }
 
@@ -299,7 +306,7 @@ function DashboardPage() {
     }));
     scored.sort((a, b) => (b.advScore ?? -1) - (a.advScore ?? -1));
     return scored.slice(0, TOP_N);
-  }, [overallCandidates, overallNavMap]);
+  }, [overallCandidates, freshNavMap]);
 
   // ── Category pool ────────────────────────────────────────────────────────
   // Strict Direct-Growth plans only in the selected category. No fallback.
@@ -321,49 +328,33 @@ function DashboardPage() {
     prevCat.current = activeCategory;
   }
 
-  // ── Batch query for the category pool ────────────────────────────────────
-  // Typically 30-60 funds per category → fits in a single server request.
-  // Results arrive all at once, so the category table populates in ~3-5 s.
+  // ── Category pool — individual browser fetches ───────────────────────────
+  // Typically 30-60 funds per category → fast with direct browser fetches.
 
-  const catCodes = useMemo(
-    () => catCandidates.map((s) => s.schemeCode),
-    [catCandidates],
-  );
-
-  const catBatchQ = useQuery({
-    queryKey: ["nav-batch-cat", activeCategory, catCandidates.length],
-    queryFn: () => fetchNavHistoryBatch(catCodes),
-    staleTime: 12 * 60 * 60 * 1000,
-    retry: 1,
-    enabled: catCodes.length > 0,
+  const catNavQ = useQueries({
+    queries: catCandidates.map((s) => ({
+      queryKey: ["nav-history", s.schemeCode],
+      queryFn: () => fetchNavHistory(s.schemeCode),
+      staleTime: 12 * 60 * 60 * 1000,
+      retry: 1,
+    })),
   });
 
-  const catNavMap = useMemo(() => {
-    const map = new Map<string, NavHistory | null>();
-    if (catBatchQ.data) {
-      for (const [code, history] of Object.entries(catBatchQ.data)) {
-        map.set(code, history);
-      }
-    }
-    return map;
-  }, [catBatchQ.data]);
-
-  const catSettled =
-    catBatchQ.status === "success" || catBatchQ.status === "error"
-      ? catCandidates.length
-      : 0;
-  const catLoaded =
-    catBatchQ.status === "success" && catBatchQ.data
-      ? Object.values(catBatchQ.data).filter((h) => h !== null).length
-      : 0;
-  const catFailed = catSettled - catLoaded;
-  const catTotal  = catCandidates.length;
-  const catDone   = catBatchQ.status === "success" || catBatchQ.status === "error";
+  const catSettled = useMemo(
+    () => catNavQ.filter((q) => q.status === "success" || q.status === "error").length,
+    [catNavQ],
+  );
+  const catLoaded = useMemo(
+    () => catNavQ.filter((q) => q.status === "success").length,
+    [catNavQ],
+  );
+  const catTotal = catCandidates.length;
+  const catDone  = catSettled === catTotal && catTotal > 0;
 
   const catRanked = useMemo((): CatRow[] => {
-    const rows: CatRow[] = catCandidates.map((s) => {
+    const rows: CatRow[] = catCandidates.map((s, i) => {
       const badge   = planBadge(s.schemeName);
-      const history = catNavMap.get(s.schemeCode);
+      const history = catNavQ[i]?.data;
       if (!history) {
         return { ...s, badge, score: null, ret1y: null, cagr3y: null, sharpe: null, maxDD: null };
       }
@@ -388,7 +379,7 @@ function DashboardPage() {
     });
     rows.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
     return rows.slice(0, TOP_N);
-  }, [catCandidates, catNavMap]);
+  }, [catCandidates, catNavQ]);
 
   // ── KPI strip ────────────────────────────────────────────────────────────
   const topAdvScore  = overallRanked[0]?.advScore ?? null;
@@ -503,7 +494,6 @@ function DashboardPage() {
           <ProgressBar
             settled={overallSettled}
             loaded={overallLoaded}
-            failed={overallFailed}
             total={overallTotal}
             label={`Overall pool · ${OVERALL_POOL_CATEGORIES.length} categories`}
           />
@@ -603,9 +593,7 @@ function DashboardPage() {
 
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-background/40 px-4 py-2.5">
               <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-                {overallLoaded.toLocaleString()} scored
-                {overallFailed > 0 && <span className="text-negative"> · {overallFailed} unavailable</span>}
-                {" "}· {overallTotal.toLocaleString()} total · top {TOP_N} shown
+                {overallLoaded.toLocaleString()} scored · {overallTotal.toLocaleString()} total · top {TOP_N} shown
               </span>
               {overallDone ? (
                 <span className="flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-wider text-positive">
@@ -668,7 +656,6 @@ function DashboardPage() {
           <ProgressBar
             settled={catSettled}
             loaded={catLoaded}
-            failed={catFailed}
             total={catTotal}
             label={`${activeCategory} · ${catTotal} Direct-Growth plans`}
           />
@@ -777,9 +764,7 @@ function DashboardPage() {
 
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-background/40 px-4 py-2.5">
               <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-                {catLoaded}/{catTotal} scored
-                {catFailed > 0 && <span className="text-negative"> · {catFailed} unavailable</span>}
-                {catDone && <span className="text-positive"> · final ranking</span>}
+                {catLoaded}/{catTotal} scored{catDone && <span className="text-positive"> · final ranking</span>}
               </span>
               <Link to="/rankings"
                 className="font-mono text-[9px] uppercase tracking-wider text-cyan transition-colors hover:text-cyan/80">
