@@ -2,17 +2,18 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import {
-  AlertCircle, Loader2, Info, Trophy, CheckCircle2,
-  ChevronDown, ChevronUp, ShieldCheck, Zap,
+  AlertCircle, Loader2, Trophy, CheckCircle2,
+  ChevronDown, ChevronUp, ShieldCheck, Zap, Search, X,
 } from "lucide-react";
 import { useAMFISchemes, filterActiveSchemes, type AMFIScheme } from "@/lib/live-data";
 import { classifyAMFICategory, type QuantFundCategory } from "@/lib/categories";
-import { fetchNavHistory } from "@/lib/nav-history";
+import { fetchNavHistoryBatch, type NavPoint } from "@/lib/nav-history";
 import { fmtPct, fmtNum } from "@/lib/format";
 import { AppShell } from "@/components/AppShell";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
 import {
   computeEngineMetrics,
+  buildBenchmark,
   scoreWithPeers,
   getRating,
   getStrengthsWeaknesses,
@@ -24,9 +25,8 @@ export const Route = createFileRoute("/rankings")({
   head: () => ({
     meta: [
       { title: "Rankings — QuantFund" },
-      { name: "description", content: "Institutional-style mutual fund scoring engine — 7-pillar, category-scoped, NAV-verified." },
+      { name: "description", content: "All mutual funds ranked by the 7-pillar QuantFund Scoring Engine. Category-fair, NAV-verified." },
       { property: "og:title", content: "Rankings — QuantFund" },
-      { property: "og:description", content: "Top Indian mutual funds ranked within each category by the QuantFund Scoring Engine." },
       { property: "og:url", content: "https://mrwhitemf1.lovable.app/rankings" },
     ],
     links: [{ rel: "canonical", href: "https://mrwhitemf1.lovable.app/rankings" }],
@@ -36,61 +36,25 @@ export const Route = createFileRoute("/rankings")({
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-type BroadTab = "Equity" | "Hybrid" | "Debt" | "Index / ETF" | "Gold & Intl";
-
-const BROAD_TABS: BroadTab[] = ["Equity", "Hybrid", "Debt", "Index / ETF", "Gold & Intl"];
-
-const CATEGORIES_BY_BROAD: Record<BroadTab, QuantFundCategory[]> = {
-  Equity: [
-    "Large Cap", "Mid Cap", "Small Cap", "Flexi Cap", "Multi Cap",
-    "Large & Mid Cap", "ELSS", "Focused", "Sectoral / Thematic", "Dividend Yield",
-  ],
-  Hybrid: [
-    "Aggressive Hybrid", "Conservative Hybrid", "Balanced Advantage",
-    "Multi Asset", "Arbitrage",
-  ],
-  Debt: [
-    "Short Duration", "Medium Duration", "Long Duration", "Dynamic Bond",
-    "Corporate Bond", "Credit Risk", "Banking & PSU", "Gilt",
-    "Liquid", "Ultra Short Duration", "Low Duration", "Money Market", "Floater",
-  ],
-  "Index / ETF": ["Index Fund", "ETF"],
-  "Gold & Intl": ["Gold", "International / FoF"],
-};
-
-const TOP_N = 25; // display limit
+const BATCH_SIZE = 100; // codes per nav-batch request
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Row = AMFIScheme & {
+  quantCategory: QuantFundCategory;
   engineMetrics: EngineMetrics | null;
   scoreResult: EngineScoreResult | null;
+  globalRank: number;
   categoryRank: number;
   totalInCategory: number;
 };
 
 // ─── Helper components ────────────────────────────────────────────────────────
 
-function InfoTooltip({ text }: { text: string }) {
-  return (
-    <span className="group/tip relative ml-1" role="tooltip" aria-label={text}>
-      <Info className="h-3 w-3 cursor-help text-muted-foreground" aria-hidden="true" />
-      <span className="pointer-events-none absolute right-0 top-4 z-20 hidden w-64 rounded-xl border border-border bg-surface p-2.5 text-[10px] normal-case tracking-normal text-foreground shadow-xl group-hover/tip:block">
-        {text}
-      </span>
-    </span>
-  );
-}
-
-function PillarBar({
-  label, score, weight, available,
-}: {
+function PillarBar({ label, score, weight, available }: {
   label: string; score: number; weight: number; available: boolean;
 }) {
-  const { color } = available
-    ? getRating(score)
-    : { color: "text-muted-foreground" };
-
+  const { color } = available ? getRating(score) : { color: "text-muted-foreground" };
   return (
     <div className="flex items-center gap-2">
       <span className="w-[148px] shrink-0 font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
@@ -100,10 +64,7 @@ function PillarBar({
         {available ? (
           <>
             <div className="h-1 flex-1 overflow-hidden rounded-full bg-border">
-              <div
-                className="h-full rounded-full bg-cyan transition-all duration-700"
-                style={{ width: `${score}%` }}
-              />
+              <div className="h-full rounded-full bg-cyan transition-all duration-700" style={{ width: `${score}%` }} />
             </div>
             <span className={`w-8 text-right font-mono text-[10px] font-bold tabular-nums ${color}`}>
               {Math.round(score)}
@@ -111,73 +72,73 @@ function PillarBar({
           </>
         ) : (
           <>
-            <div className="h-1 flex-1 overflow-hidden rounded-full bg-border opacity-30" />
+            <div className="h-1 flex-1 overflow-hidden rounded-full bg-border opacity-20" />
             <span className="w-8 text-right font-mono text-[9px] text-muted-foreground">N/A</span>
           </>
         )}
-        <span className="w-5 text-right font-mono text-[9px] text-muted-foreground opacity-50">
-          {weight}%
-        </span>
+        <span className="w-5 text-right font-mono text-[9px] text-muted-foreground opacity-40">{weight}%</span>
       </div>
     </div>
   );
 }
 
-function ScoreCard({ row, expanded, onToggle }: {
-  row: Row; expanded: boolean; onToggle: () => void;
+function ScoreCard({ row, rank, expanded, onToggle }: {
+  row: Row; rank: number; expanded: boolean; onToggle: () => void;
 }) {
   const sr = row.scoreResult;
   const ratingInfo = sr ? getRating(sr.fundScore) : null;
   const sw = sr ? getStrengthsWeaknesses(sr.pillars) : null;
+  const em = row.engineMetrics;
 
   return (
-    <div className={`group rounded-xl border transition-all duration-200 ${
-      row.categoryRank <= 3
+    <div className={`rounded-xl border transition-all duration-200 ${
+      rank <= 3
         ? "border-cyan/30 bg-cyan/[0.02] shadow-[0_0_20px_rgba(34,211,238,0.06)]"
-        : "border-border bg-surface/60"
+        : rank <= 10
+        ? "border-border/80 bg-surface/80"
+        : "border-border/50 bg-surface/40"
     }`}>
-      {/* Main row */}
-      <button
-        className="w-full text-left"
-        onClick={onToggle}
-        aria-expanded={expanded}
-      >
-        <div className="flex items-center gap-4 p-4">
+      <button className="w-full text-left" onClick={onToggle} aria-expanded={expanded}>
+        <div className="flex items-center gap-3 p-4">
           {/* Rank */}
-          <div className="flex w-9 shrink-0 flex-col items-center">
-            <span className={`font-display text-lg font-black tabular-nums leading-none ${
-              row.categoryRank <= 3 ? "text-cyan" : "text-muted-foreground"
+          <div className="flex w-10 shrink-0 flex-col items-center gap-0.5">
+            <span className={`font-display text-xl font-black leading-none tabular-nums ${
+              rank <= 3 ? "text-cyan" : "text-muted-foreground"
             }`}>
-              {row.categoryRank <= 3 ? ["🥇","🥈","🥉"][row.categoryRank - 1] : row.categoryRank}
+              {rank <= 3 ? ["🥇","🥈","🥉"][rank - 1] : `#${rank}`}
             </span>
-            <span className="mt-0.5 font-mono text-[8px] text-muted-foreground opacity-50">
-              /{row.totalInCategory}
+            <span className="font-mono text-[7px] leading-none text-muted-foreground opacity-40">
+              {row.categoryRank}/{row.totalInCategory}
             </span>
           </div>
 
           {/* Fund info */}
           <div className="min-w-0 flex-1">
-            <Link
-              to="/fund/$id"
-              params={{ id: row.schemeCode }}
-              className="block truncate text-sm font-semibold leading-tight text-foreground transition-colors hover:text-cyan"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {row.schemeName}
-            </Link>
-            <div className="mt-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-              {row.amc} · #{row.schemeCode} · NAV ₹{row.nav.toFixed(2)}
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                to="/fund/$id"
+                params={{ id: row.schemeCode }}
+                className="truncate text-sm font-semibold text-foreground transition-colors hover:text-cyan"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {row.schemeName}
+              </Link>
+              <span className="shrink-0 rounded border border-border bg-background/80 px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-widest text-muted-foreground">
+                {row.quantCategory}
+              </span>
             </div>
-            {/* Strengths / Weaknesses chips */}
+            <div className="mt-0.5 font-mono text-[9px] text-muted-foreground">
+              {row.amc} · #{row.schemeCode} · ₹{row.nav.toFixed(2)}
+            </div>
             {sw && (sw.strengths.length > 0 || sw.weaknesses.length > 0) && (
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {sw.strengths.map((s) => (
-                  <span key={s} className="flex items-center gap-0.5 rounded-md border border-positive/20 bg-positive/[0.07] px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-widest text-positive">
+                  <span key={s} className="flex items-center gap-0.5 rounded border border-positive/20 bg-positive/[0.07] px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-widest text-positive">
                     <Zap className="h-2 w-2" />{s}
                   </span>
                 ))}
                 {sw.weaknesses.map((w) => (
-                  <span key={w} className="flex items-center gap-0.5 rounded-md border border-negative/20 bg-negative/[0.07] px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-widest text-negative">
+                  <span key={w} className="flex items-center gap-0.5 rounded border border-negative/20 bg-negative/[0.07] px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-widest text-negative">
                     <ShieldCheck className="h-2 w-2" />{w}
                   </span>
                 ))}
@@ -187,49 +148,38 @@ function ScoreCard({ row, expanded, onToggle }: {
 
           {/* Score block */}
           {sr && ratingInfo ? (
-            <div className="flex shrink-0 flex-col items-end gap-1.5">
-              {/* Fund Score */}
-              <div className="flex items-baseline gap-1.5">
+            <div className="flex shrink-0 flex-col items-end gap-1">
+              <div className="flex items-baseline gap-1">
                 <span className="font-display text-3xl font-black tabular-nums leading-none text-cyan">
                   {sr.fundScore}
                 </span>
-                <span className="font-mono text-[9px] text-muted-foreground">/100</span>
+                <span className="font-mono text-[8px] text-muted-foreground">/100</span>
               </div>
-              {/* Rating badge */}
-              <span className={`rounded-md border px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-widest ${ratingInfo.bg} ${ratingInfo.color}`}>
+              <span className={`rounded border px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-widest ${ratingInfo.bg} ${ratingInfo.color}`}>
                 {sr.rating}
               </span>
-              {/* Confidence */}
               <div className="flex items-center gap-1">
                 <span className="font-mono text-[8px] text-muted-foreground">Confidence</span>
                 <span className="font-mono text-[10px] font-bold tabular-nums text-foreground">
                   {sr.confidenceScore}
                 </span>
               </div>
-              {/* Expand toggle */}
-              <div className="mt-0.5 text-muted-foreground">
-                {expanded
-                  ? <ChevronUp className="h-3.5 w-3.5" />
-                  : <ChevronDown className="h-3.5 w-3.5" />}
-              </div>
+              {expanded ? <ChevronUp className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" />
+                        : <ChevronDown className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" />}
             </div>
-          ) : row.engineMetrics === null ? (
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
           ) : (
-            <span className="font-mono text-[10px] text-muted-foreground">Scoring…</span>
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
           )}
         </div>
       </button>
 
       {/* Expanded breakdown */}
-      {expanded && sr && (
+      {expanded && sr && em && (
         <div className="border-t border-border/60 px-4 py-4">
-          <div className="grid gap-y-0.5 sm:grid-cols-2 sm:gap-x-8">
-            {/* Left column */}
+          <div className="grid gap-6 sm:grid-cols-2">
+            {/* Pillar scores */}
             <div className="space-y-1.5">
-              <p className="mb-2 font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
-                Pillar Scores
-              </p>
+              <p className="mb-2 font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground">Pillar Scores</p>
               <PillarBar label="Long-Term Consistency" score={sr.pillars.longTermConsistency.rawScore} weight={23} available={sr.pillars.longTermConsistency.available} />
               <PillarBar label="Short-Term Perf." score={sr.pillars.shortTermPerformance.rawScore} weight={5} available={sr.pillars.shortTermPerformance.available} />
               <PillarBar label="Risk-Adjusted" score={sr.pillars.riskAdjusted.rawScore} weight={20} available={sr.pillars.riskAdjusted.available} />
@@ -239,40 +189,35 @@ function ScoreCard({ row, expanded, onToggle }: {
               <PillarBar label="Management & AUM" score={0} weight={5} available={false} />
             </div>
 
-            {/* Right column — key metrics */}
-            <div className="mt-4 sm:mt-0">
-              <p className="mb-2 font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
-                Key Metrics
-              </p>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+            {/* Key metrics grid */}
+            <div>
+              <p className="mb-2 font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground">Key Metrics</p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
                 {[
-                  { label: "3Y CAGR",   v: row.engineMetrics?.cagr3y,        fmt: (x: number) => fmtPct(x, { signed: true }) },
-                  { label: "5Y CAGR",   v: row.engineMetrics?.cagr5y,        fmt: (x: number) => fmtPct(x, { signed: true }) },
-                  { label: "Sharpe",    v: row.engineMetrics?.sharpe,         fmt: (x: number) => fmtNum(x, 2) },
-                  { label: "Sortino",   v: row.engineMetrics?.sortino,        fmt: (x: number) => fmtNum(x, 2) },
-                  { label: "Max DD",    v: row.engineMetrics?.maxDrawdown,    fmt: (x: number) => fmtPct(x, { signed: true }) },
-                  { label: "Std Dev",   v: row.engineMetrics?.stdDev,         fmt: (x: number) => fmtPct(x) },
-                  { label: "Recovery",  v: row.engineMetrics?.recoveryMonths, fmt: (x: number) => `${fmtNum(x, 1)} mo` },
-                  { label: "History",   v: row.engineMetrics?.historyYears,   fmt: (x: number) => `${fmtNum(x, 1)} yr` },
+                  { label: "3Y CAGR",   v: em.cagr3y,          fmt: (x: number) => fmtPct(x, { signed: true }) },
+                  { label: "5Y CAGR",   v: em.cagr5y,          fmt: (x: number) => fmtPct(x, { signed: true }) },
+                  { label: "Sortino",   v: em.sortino,          fmt: (x: number) => fmtNum(x, 2) },
+                  { label: "Sharpe",    v: em.sharpe,           fmt: (x: number) => fmtNum(x, 2) },
+                  { label: "Info Ratio",v: em.informationRatio, fmt: (x: number) => fmtNum(x, 2) },
+                  { label: "Beta",      v: em.beta,             fmt: (x: number) => fmtNum(x, 2) },
+                  { label: "↓ Capture", v: em.downsideCapture,  fmt: (x: number) => `${fmtNum(x, 1)}%` },
+                  { label: "↑ Capture", v: em.upsideCapture,    fmt: (x: number) => `${fmtNum(x, 1)}%` },
+                  { label: "Max DD",    v: em.maxDrawdown,      fmt: (x: number) => fmtPct(x, { signed: true }) },
+                  { label: "Recovery",  v: em.recoveryMonths,   fmt: (x: number) => `${fmtNum(x, 1)} mo` },
+                  { label: "Std Dev",   v: em.stdDev,           fmt: (x: number) => fmtPct(x) },
+                  { label: "History",   v: em.historyYears,     fmt: (x: number) => `${fmtNum(x, 1)} yr` },
                 ].map(({ label, v, fmt }) => (
                   <div key={label}>
-                    <p className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground">{label}</p>
-                    <p className={`font-mono text-[11px] font-bold tabular-nums ${
-                      v == null ? "text-muted-foreground" :
-                      label === "Max DD" ? (v < -0.3 ? "text-negative" : v < -0.15 ? "text-warning" : "text-positive") :
-                      label === "Std Dev" || label === "Recovery" ? "text-foreground" :
-                      "text-foreground"
-                    }`}>
+                    <p className="font-mono text-[8px] uppercase tracking-widest text-muted-foreground">{label}</p>
+                    <p className="font-mono text-[11px] font-bold tabular-nums text-foreground">
                       {v == null ? "—" : fmt(v as number)}
                     </p>
                   </div>
                 ))}
               </div>
               <p className="mt-3 font-mono text-[8px] text-muted-foreground">
-                Score confidence {sr.confidenceScore}/100 · Based on {row.engineMetrics?.historyYears
-                  ? `${fmtNum(row.engineMetrics.historyYears, 1)} yrs NAV history`
-                  : "limited history"
-                } · {row.engineMetrics?.dataPoints.toLocaleString()} NAV points
+                Confidence {sr.confidenceScore}/100 · {em.dataPoints.toLocaleString()} NAV points ·
+                Cat rank {row.categoryRank}/{row.totalInCategory} in {row.quantCategory}
               </p>
             </div>
           </div>
@@ -285,86 +230,139 @@ function ScoreCard({ row, expanded, onToggle }: {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 function Rankings() {
-  const { data: allSchemes, isLoading, isError, error } = useAMFISchemes();
-  const [activeTab, setActiveTab] = useState<BroadTab>("Equity");
-  const [activeCategory, setActiveCategory] = useState<QuantFundCategory>("Large Cap");
+  const { data: allSchemes, isLoading: schemesLoading, isError, error } = useAMFISchemes();
   const [expandedCode, setExpandedCode] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
-  const activeSchemes = useMemo(
-    () => (allSchemes ? filterActiveSchemes(allSchemes) : []),
-    [allSchemes],
-  );
-
-  // Candidate funds for the active category (all direct-growth, no pre-slice)
-  const candidates = useMemo(() => {
-    const inCat = activeSchemes.filter(
-      (s) => classifyAMFICategory(s.category) === activeCategory,
-    );
-    const direct = inCat.filter(
+  // All active direct-growth schemes across ALL categories
+  const allCandidates = useMemo(() => {
+    if (!allSchemes) return [];
+    const active = filterActiveSchemes(allSchemes);
+    const direct = active.filter(
       (s) => /direct/i.test(s.schemeName) && /growth/i.test(s.schemeName),
     );
-    return direct.length >= 10 ? direct : inCat;
-  }, [activeSchemes, activeCategory]);
+    return direct.length >= 50 ? direct : active;
+  }, [allSchemes]);
 
-  // Fetch NAV history for every candidate (category-scoped)
-  const navQueries = useQueries({
-    queries: candidates.map((s) => ({
-      queryKey: ["nav-history", s.schemeCode],
-      queryFn: () => fetchNavHistory(s.schemeCode),
+  // Split into batches of BATCH_SIZE for the server-side batch endpoint
+  const batches = useMemo(() => {
+    const out: string[][] = [];
+    for (let i = 0; i < allCandidates.length; i += BATCH_SIZE) {
+      out.push(allCandidates.slice(i, i + BATCH_SIZE).map((s) => s.schemeCode));
+    }
+    return out;
+  }, [allCandidates]);
+
+  // One React Query per batch — all fire in parallel
+  const batchQueries = useQueries({
+    queries: batches.map((codes) => ({
+      queryKey: ["nav-batch", codes.join(",")],
+      queryFn: () => fetchNavHistoryBatch(codes),
       staleTime: 12 * 60 * 60 * 1000,
       retry: 1,
     })),
   });
 
-  const navLoaded = navQueries.filter((q) => q.data).length;
-  const navTotal = navQueries.length;
-  const allReady = navLoaded === navTotal && navTotal > 0;
+  // Progress counters
+  const batchesLoaded = batchQueries.filter((q) => q.isSuccess || q.isError).length;
+  const batchesTotal = batchQueries.length;
+  const progressPct = batchesTotal > 0 ? Math.round((batchesLoaded / batchesTotal) * 100) : 0;
+  const isLoadingData = batchesLoaded < batchesTotal;
+
+  // Merge all batch results into one code → series map
+  const seriesMap = useMemo(() => {
+    const map = new Map<string, NavPoint[]>();
+    for (const q of batchQueries) {
+      if (!q.data) continue;
+      for (const [code, hist] of Object.entries(q.data)) {
+        if (hist?.series?.length) map.set(code, hist.series);
+      }
+    }
+    return map;
+  }, [batchQueries]);
 
   // Two-pass scoring:
-  //   Pass 1 — compute raw EngineMetrics for every loaded fund
-  //   Pass 2 — score each fund against the full peer set
+  //   1. Group loaded funds by category
+  //   2. Build benchmark per category
+  //   3. Compute metrics (with benchmark)
+  //   4. Score vs peers
+  //   5. Flatten and sort globally
   const ranked = useMemo((): Row[] => {
-    // Pass 1
-    const metricsList: (EngineMetrics | null)[] = candidates.map((_, i) => {
-      const data = navQueries[i]?.data;
-      return data ? computeEngineMetrics(data.series) : null;
-    });
+    // Collect loaded funds
+    const loaded: { scheme: AMFIScheme; series: NavPoint[]; cat: QuantFundCategory }[] = [];
+    for (const scheme of allCandidates) {
+      const series = seriesMap.get(scheme.schemeCode);
+      if (!series) continue;
+      loaded.push({ scheme, series, cat: classifyAMFICategory(scheme.category) });
+    }
+    if (!loaded.length) return [];
 
-    const peerMetrics = metricsList.filter((m): m is EngineMetrics => m != null);
+    // Group by category
+    const byCategory = new Map<QuantFundCategory, typeof loaded>();
+    for (const item of loaded) {
+      let arr = byCategory.get(item.cat);
+      if (!arr) { arr = []; byCategory.set(item.cat, arr); }
+      arr.push(item);
+    }
 
-    // Pass 2
-    const rows: Row[] = candidates.map((s, i) => {
-      const em = metricsList[i];
-      const sr = em && peerMetrics.length > 1
-        ? scoreWithPeers(em, peerMetrics)
-        : null;
-      return { ...s, engineMetrics: em, scoreResult: sr, categoryRank: 0, totalInCategory: candidates.length };
-    });
+    const allRows: Row[] = [];
 
-    // Sort by fund score (nulls last)
-    rows.sort((a, b) => {
-      const sa = a.scoreResult?.fundScore ?? -1;
-      const sb = b.scoreResult?.fundScore ?? -1;
-      return sb - sa;
-    });
+    for (const [cat, entries] of byCategory) {
+      if (entries.length < 2) continue;
 
-    // Assign category rank
-    rows.forEach((r, i) => { r.categoryRank = i + 1; });
+      // Build category benchmark
+      const benchmark = buildBenchmark(entries.map((e) => e.series));
 
-    return rows.slice(0, TOP_N);
-  }, [candidates, navQueries]);
+      // Compute per-fund metrics (with benchmark if available)
+      const metricsList = entries.map((e) => computeEngineMetrics(e.series, benchmark));
 
-  const handleTabChange = (tab: BroadTab) => {
-    setActiveTab(tab);
-    setActiveCategory(CATEGORIES_BY_BROAD[tab][0]);
-    setExpandedCode(null);
-  };
+      // Score each fund against its category peers
+      entries.forEach((e, i) => {
+        const em = metricsList[i];
+        const sr = scoreWithPeers(em, metricsList);
+        allRows.push({
+          ...e.scheme,
+          quantCategory: cat,
+          engineMetrics: em,
+          scoreResult: sr,
+          globalRank: 0,   // filled below
+          categoryRank: 0, // filled below
+          totalInCategory: entries.length,
+        });
+      });
+    }
 
-  const handleCategoryChange = (cat: QuantFundCategory) => {
-    setActiveCategory(cat);
-    setExpandedCode(null);
-  };
+    // Sort globally by fund score
+    allRows.sort((a, b) => (b.scoreResult?.fundScore ?? -1) - (a.scoreResult?.fundScore ?? -1));
 
+    // Assign global rank
+    allRows.forEach((r, i) => { r.globalRank = i + 1; });
+
+    // Assign category rank (first time a category appears = rank 1, since list is sorted by score)
+    const catRankCounter = new Map<QuantFundCategory, number>();
+    for (const row of allRows) {
+      const cur = (catRankCounter.get(row.quantCategory) ?? 0) + 1;
+      catRankCounter.set(row.quantCategory, cur);
+      row.categoryRank = cur;
+    }
+
+    return allRows;
+  }, [allCandidates, seriesMap]);
+
+  // Search filter (applied at display time only, does not affect scoring)
+  const filteredRows = useMemo(() => {
+    if (!search.trim()) return ranked;
+    const q = search.toLowerCase();
+    return ranked.filter(
+      (r) =>
+        r.schemeName.toLowerCase().includes(q) ||
+        r.amc.toLowerCase().includes(q) ||
+        r.quantCategory.toLowerCase().includes(q) ||
+        r.schemeCode.includes(q),
+    );
+  }, [ranked, search]);
+
+  // ── Error state ──────────────────────────────────────────────────────────
   if (isError) {
     return (
       <AppShell title="Rankings">
@@ -383,7 +381,8 @@ function Rankings() {
     );
   }
 
-  if (isLoading || !allSchemes) {
+  // ── Schemes loading ──────────────────────────────────────────────────────
+  if (schemesLoading || !allSchemes) {
     return (
       <AppShell title="Rankings">
         <div className="flex flex-col items-center gap-3 py-24 text-muted-foreground">
@@ -408,40 +407,68 @@ function Rankings() {
               <h1 className="font-display text-2xl font-bold tracking-tight">Rankings</h1>
             </div>
             <p className="mt-1 font-mono text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              7-Pillar Scoring Engine · Category-Scoped · {activeSchemes.length.toLocaleString()} Schemes
+              All Schemes · 7-Pillar Engine · Category-Fair Scoring
             </p>
           </div>
-          <DataSourceBadge
-            source="AMFI + mfapi.in"
-            asOf={asOf}
-            note="Rankings are always within-category. Cross-category comparison is invalid."
-          />
+          <DataSourceBadge source="AMFI + mfapi.in" asOf={asOf}
+            note="Scores are always computed within each fund's category peer group." />
         </div>
 
-        {/* Score formula strip */}
+        {/* Loading progress bar */}
+        {batchesTotal > 0 && (
+          <div className="rounded-xl border border-border bg-surface/60 p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {isLoadingData ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan" />
+                ) : (
+                  <CheckCircle2 className="h-3.5 w-3.5 text-positive" />
+                )}
+                <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-foreground">
+                  {isLoadingData
+                    ? `Loading NAV data… ${batchesLoaded}/${batchesTotal} batches`
+                    : `All data loaded — ${ranked.length.toLocaleString()} funds scored`}
+                </span>
+              </div>
+              <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+                {progressPct}%
+              </span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
+              <div
+                className="h-full rounded-full bg-cyan transition-all duration-500"
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+            <div className="mt-2 flex items-center justify-between font-mono text-[9px] text-muted-foreground">
+              <span>
+                {seriesMap.size.toLocaleString()} / {allCandidates.length.toLocaleString()} funds loaded
+              </span>
+              <span>{ranked.length.toLocaleString()} funds scored so far</span>
+            </div>
+          </div>
+        )}
+
+        {/* Pillar weight reference */}
         <div className="overflow-hidden rounded-xl border border-border bg-surface/60">
-          <div className="border-b border-border/40 px-4 py-2.5">
-            <p className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-cyan">
+          <div className="border-b border-border/40 px-4 py-2">
+            <p className="font-mono text-[9px] font-bold uppercase tracking-[0.18em] text-cyan">
               QuantFund Scoring Engine — Pillar Weights
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-2 px-4 py-3 sm:grid-cols-4 lg:grid-cols-7">
+          <div className="grid grid-cols-4 gap-2 px-4 py-3 sm:grid-cols-7">
             {[
               { name: "Long-Term Consistency", w: 23, live: true },
-              { name: "Short-Term Perf.", w: 5, live: true },
+              { name: "Short-Term", w: 5, live: true },
               { name: "Risk-Adjusted", w: 20, live: true },
               { name: "Downside Protection", w: 20, live: true },
               { name: "Cost Efficiency", w: 15, live: false },
               { name: "Portfolio Quality", w: 12, live: false },
-              { name: "Management & AUM", w: 5, live: false },
+              { name: "Mgmt & AUM", w: 5, live: false },
             ].map(({ name, w, live }) => (
-              <div key={name} className={`rounded-lg border p-2 ${live ? "border-border bg-background" : "border-border/40 bg-background/40 opacity-50"}`}>
-                <p className="font-mono text-[8px] uppercase tracking-widest text-muted-foreground">
-                  {name}
-                </p>
-                <p className={`mt-1 font-display text-base font-black tabular-nums ${live ? "text-foreground" : "text-muted-foreground"}`}>
-                  {w}%
-                </p>
+              <div key={name} className={`rounded-lg border p-2 ${live ? "border-border bg-background" : "border-border/30 bg-background/30 opacity-50"}`}>
+                <p className="font-mono text-[7px] uppercase tracking-widest text-muted-foreground leading-tight">{name}</p>
+                <p className={`mt-1 font-display text-base font-black tabular-nums ${live ? "text-foreground" : "text-muted-foreground"}`}>{w}%</p>
                 <p className={`font-mono text-[7px] uppercase tracking-widest ${live ? "text-positive" : "text-muted-foreground"}`}>
                   {live ? "● Live" : "○ Phase 2"}
                 </p>
@@ -450,103 +477,77 @@ function Rankings() {
           </div>
         </div>
 
-        {/* Broad tabs */}
-        <div className="no-scrollbar flex gap-1.5 overflow-x-auto pb-0.5">
-          {BROAD_TABS.map((tab) => (
+        {/* Search bar */}
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Filter by fund name, AMC, category, or scheme code…"
+            className="w-full rounded-xl border border-border bg-surface px-9 py-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:border-cyan focus:outline-none focus:ring-1 focus:ring-cyan/20"
+          />
+          {search && (
             <button
-              key={tab}
-              onClick={() => handleTabChange(tab)}
-              className={`shrink-0 rounded-lg px-4 py-2 font-mono text-[10px] font-bold uppercase tracking-widest transition-all duration-150 ${
-                activeTab === tab
-                  ? "bg-primary text-primary-foreground"
-                  : "border border-border bg-surface text-muted-foreground hover:border-primary/40 hover:text-foreground"
-              }`}
+              onClick={() => setSearch("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             >
-              {tab}
+              <X className="h-3.5 w-3.5" />
             </button>
-          ))}
+          )}
         </div>
 
-        {/* Sub-category pills */}
-        <div className="no-scrollbar flex gap-2 overflow-x-auto pb-0.5">
-          {CATEGORIES_BY_BROAD[activeTab].map((cat) => {
-            const count = activeSchemes.filter(
-              (s) => classifyAMFICategory(s.category) === cat,
-            ).length;
-            return (
-              <button
-                key={cat}
-                onClick={() => handleCategoryChange(cat)}
-                className={`shrink-0 rounded-lg px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-widest transition-all duration-150 ${
-                  cat === activeCategory
-                    ? "bg-cyan text-background shadow-[0_0_12px_rgba(34,211,238,0.25)]"
-                    : "border border-border bg-surface text-muted-foreground hover:border-cyan/40 hover:text-foreground"
-                }`}
-              >
-                {cat}
-                <span className="ml-1.5 opacity-50">({count})</span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Leaderboard header */}
-        <div className="flex items-center justify-between rounded-t-xl border border-border bg-background/60 px-4 py-3">
+        {/* Results header */}
+        <div className="flex items-center justify-between px-1">
           <span className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-cyan">
-            Top {TOP_N} — {activeCategory}
+            {search
+              ? `${filteredRows.length.toLocaleString()} results for "${search}"`
+              : `${ranked.length.toLocaleString()} funds ranked globally`}
           </span>
-          <div className="flex items-center gap-2">
-            <span className="flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
-              {allReady ? (
-                <><CheckCircle2 className="h-3 w-3 text-positive" />{navLoaded} scored</>
-              ) : (
-                <><Loader2 className="h-3 w-3 animate-spin" />Scoring {navLoaded}/{navTotal}</>
-              )}
-              <InfoTooltip text="Funds are scored in two passes: metrics are computed per fund, then percentile-ranked within the category peer group. Only Direct-Growth plans shown." />
+          {isLoadingData && (
+            <span className="flex items-center gap-1.5 font-mono text-[9px] text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Scoring {ranked.length} / {allCandidates.length}…
             </span>
-          </div>
+          )}
         </div>
 
         {/* Score cards */}
-        {candidates.length === 0 ? (
+        {filteredRows.length === 0 && !isLoadingData ? (
           <div className="rounded-xl border border-border py-16 text-center font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-            No schemes found in {activeCategory}
+            {search ? `No funds match "${search}"` : "Loading fund data…"}
           </div>
         ) : (
-          <div className="space-y-2">
-            {ranked.map((row) => (
+          <div className="space-y-2 pb-8">
+            {filteredRows.map((row) => (
               <ScoreCard
                 key={row.schemeCode}
                 row={row}
+                rank={search ? row.globalRank : row.globalRank}
                 expanded={expandedCode === row.schemeCode}
                 onToggle={() =>
-                  setExpandedCode(
-                    expandedCode === row.schemeCode ? null : row.schemeCode,
-                  )
+                  setExpandedCode(expandedCode === row.schemeCode ? null : row.schemeCode)
                 }
               />
             ))}
+            {isLoadingData && ranked.length > 0 && (
+              <div className="flex items-center justify-center gap-2 rounded-xl border border-border border-dashed py-6 font-mono text-[10px] text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan" />
+                Loading more funds… {batchesLoaded}/{batchesTotal} batches complete
+              </div>
+            )}
           </div>
         )}
 
         {/* Footer */}
-        <div className="space-y-2 pb-8">
-          <p className="text-[10px] leading-relaxed text-muted-foreground">
-            <strong className="text-foreground">Scoring methodology:</strong> Fund Score (0–100) is the
-            weighted average of percentile ranks across 4 live pillars (68% of total weight — categories 5–7
-            require expense ratio and portfolio data not yet available). Score is normalized to 0–100 within
-            available pillars. Confidence Score (0–100) reflects fund history length and data completeness.
-            Both scores are category-relative — comparison across categories is invalid.
-          </p>
-          <p className="text-[10px] text-muted-foreground">
-            Data: {" "}
-            <a href="https://www.amfiindia.com" target="_blank" rel="noopener noreferrer" className="text-cyan underline underline-offset-2">AMFI</a>
-            {" "}&amp;{" "}
-            <a href="https://www.mfapi.in" target="_blank" rel="noopener noreferrer" className="text-cyan underline underline-offset-2">mfapi.in</a>
-            . Last updated: {asOf ?? "—"}.
-            This is a research tool, not investment advice.
-          </p>
-        </div>
+        <p className="pb-8 text-[10px] leading-relaxed text-muted-foreground">
+          <strong className="text-foreground">Scoring:</strong> Fund Score (0–100) is the weighted percentile rank across
+          4 live pillars. Information Ratio, Beta, and Capture Ratios use the category equal-weighted NAV benchmark.
+          Scores are computed within each fund's category peer group — cross-category comparison is invalid.
+          Data: {" "}
+          <a href="https://www.amfiindia.com" target="_blank" rel="noopener noreferrer" className="text-cyan underline underline-offset-2">AMFI</a>
+          {" "}&amp; <a href="https://www.mfapi.in" target="_blank" rel="noopener noreferrer" className="text-cyan underline underline-offset-2">mfapi.in</a>.
+          Research tool only — not investment advice.
+        </p>
       </div>
     </AppShell>
   );
