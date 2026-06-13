@@ -37,7 +37,7 @@ export type NavBatchResult = Record<string, NavHistory | null>;
 // Limits simultaneous direct mfapi.in fetches so fund-detail pages don't
 // overwhelm the browser connection pool.
 
-const MAX_CONCURRENT = 20;
+const MAX_CONCURRENT = 100;
 let inFlight = 0;
 const waitQueue: Array<() => void> = [];
 
