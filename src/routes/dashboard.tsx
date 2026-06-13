@@ -141,10 +141,10 @@ function ScoreBar({ value }: { value: number | null }) {
 }
 
 function ProgressBar({
-  loaded, total, label,
-}: { loaded: number; total: number; label: string }) {
-  const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
-  const done = loaded === total && total > 0;
+  settled, loaded, failed, total, label,
+}: { settled: number; loaded: number; failed: number; total: number; label: string }) {
+  const pct = total > 0 ? Math.round((settled / total) * 100) : 0;
+  const done = settled === total && total > 0;
   return (
     <div className="mb-3 rounded-xl border border-border bg-surface/60 px-4 py-3">
       <div className="mb-1.5 flex items-center justify-between">
@@ -152,7 +152,11 @@ function ProgressBar({
           {done
             ? <CheckCircle2 className="h-3 w-3 text-positive" />
             : <Loader2 className="h-3 w-3 animate-spin text-cyan" />}
-          {label} — {loaded.toLocaleString()} / {total.toLocaleString()} loaded
+          {label} — {loaded.toLocaleString()} scored
+          {failed > 0 && (
+            <span className="text-negative">· {failed} unavailable</span>
+          )}
+          <span className="opacity-60">/ {total.toLocaleString()} total</span>
         </span>
         <span className="font-mono text-[10px] text-muted-foreground">{pct}%</span>
       </div>
@@ -162,9 +166,9 @@ function ProgressBar({
           style={{ width: `${pct}%` }}
         />
       </div>
-      {!done && loaded > 0 && (
+      {!done && settled > 0 && (
         <p className="mt-1.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-          Ranking updates live as each fund loads — final order stabilises when complete
+          Ranking updates live — {settled}/{total} settled · max 20 parallel fetches
         </p>
       )}
     </div>
@@ -214,12 +218,19 @@ function DashboardPage() {
     })),
   });
 
-  const overallLoaded = useMemo(
-    () => overallNavQ.filter((q) => !!q.data).length,
+  // Count both successes AND errors as "settled" — errored queries never
+  // resolve to q.data so the old counter got stuck at ~96% indefinitely.
+  const overallSettled = useMemo(
+    () => overallNavQ.filter((q) => q.status === "success" || q.status === "error").length,
     [overallNavQ],
   );
+  const overallLoaded = useMemo(
+    () => overallNavQ.filter((q) => q.status === "success").length,
+    [overallNavQ],
+  );
+  const overallFailed = overallSettled - overallLoaded;
   const overallTotal = overallNavQ.length;
-  const overallDone  = overallLoaded === overallTotal && overallTotal > 0;
+  const overallDone  = overallSettled === overallTotal && overallTotal > 0;
 
   // Progressively ranked. Metrics are cached per-fund so each recompute is
   // O(n) (percentile sort) not O(n × navLen).
@@ -279,12 +290,17 @@ function DashboardPage() {
     })),
   });
 
-  const catLoaded = useMemo(
-    () => catNavQ.filter((q) => !!q.data).length,
+  const catSettled = useMemo(
+    () => catNavQ.filter((q) => q.status === "success" || q.status === "error").length,
     [catNavQ],
   );
+  const catLoaded = useMemo(
+    () => catNavQ.filter((q) => q.status === "success").length,
+    [catNavQ],
+  );
+  const catFailed = catSettled - catLoaded;
   const catTotal = catNavQ.length;
-  const catDone  = catLoaded === catTotal && catTotal > 0;
+  const catDone  = catSettled === catTotal && catTotal > 0;
 
   const catRanked = useMemo((): CatRow[] => {
     const rows: CatRow[] = catCandidates.map((s, i) => {
@@ -427,7 +443,9 @@ function DashboardPage() {
           </div>
 
           <ProgressBar
+            settled={overallSettled}
             loaded={overallLoaded}
+            failed={overallFailed}
             total={overallTotal}
             label={`Overall pool · ${OVERALL_POOL_CATEGORIES.length} categories`}
           />
@@ -527,16 +545,17 @@ function DashboardPage() {
 
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-background/40 px-4 py-2.5">
               <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-                {overallLoaded.toLocaleString()} of {overallTotal.toLocaleString()} schemes scored ·
-                top {TOP_N} shown · {OVERALL_POOL_CATEGORIES.length} categories
+                {overallLoaded.toLocaleString()} scored
+                {overallFailed > 0 && <span className="text-negative"> · {overallFailed} unavailable</span>}
+                {" "}· {overallTotal.toLocaleString()} total · top {TOP_N} shown
               </span>
               {overallDone ? (
                 <span className="flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-wider text-positive">
-                  <CheckCircle2 className="h-3 w-3" /> All scored · final ranking
+                  <CheckCircle2 className="h-3 w-3" /> Complete · final ranking
                 </span>
               ) : (
                 <span className="flex items-center gap-1.5 font-mono text-[9px] text-muted-foreground">
-                  <Loader2 className="h-3 w-3 animate-spin" /> Partial ranking — updating…
+                  <Loader2 className="h-3 w-3 animate-spin" /> Loading — {overallSettled}/{overallTotal}…
                 </span>
               )}
             </div>
@@ -589,9 +608,11 @@ function DashboardPage() {
           </div>
 
           <ProgressBar
+            settled={catSettled}
             loaded={catLoaded}
+            failed={catFailed}
             total={catTotal}
-            label={`${activeCategory} · all ${catTotal} plans`}
+            label={`${activeCategory} · ${catTotal} Direct-Growth plans`}
           />
 
           <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
@@ -698,8 +719,9 @@ function DashboardPage() {
 
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-background/40 px-4 py-2.5">
               <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-                {catLoaded}/{catTotal} plans loaded · top {TOP_N} shown
-                {catDone && ` · final ranking`}
+                {catLoaded}/{catTotal} scored
+                {catFailed > 0 && <span className="text-negative"> · {catFailed} unavailable</span>}
+                {catDone && <span className="text-positive"> · final ranking</span>}
               </span>
               <Link to="/rankings"
                 className="font-mono text-[9px] uppercase tracking-wider text-cyan transition-colors hover:text-cyan/80">
