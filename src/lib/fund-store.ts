@@ -6,11 +6,11 @@
  * read from here — no re-fetch, no loading spinner if Dashboard ran first.
  *
  * Subscription system: call subscribeToRankedList(fn) to be notified whenever
- * setFullRankedList is called.  Returns an unsubscribe function.
+ * the ranked list is updated.  Returns an unsubscribe function.
  */
 
 import type { NavPoint } from "./nav-history";
-import type { FundMetrics } from "./fund-metrics";
+import type { EngineMetrics, EngineScoreResult } from "./scoring-engine";
 
 // ─── NAV series store ────────────────────────────────────────────────────────
 
@@ -31,12 +31,20 @@ export function storedCount(): number {
   return navStore.size;
 }
 
-// ─── Full ranked list (Dashboard Table 1 — all funds, all categories) ────────
+// ─── Full ranked list (populated by Dashboard's 7-pillar engine scoring) ──────
 
 /**
- * One entry per Direct-Growth fund, sorted by Advanced Score descending.
- * Dashboard writes this at scoring milestones; subscribers (Rankings, etc.)
- * are notified immediately so they re-render without polling or re-fetching.
+ * One entry per Direct-Growth fund, sorted by finalScore descending.
+ *
+ * Fields:
+ *   fundScore       — pure quality 0–100, category-relative percentile
+ *   finalScore      — fundScore × 90% + confidenceScore × 10% (primary display)
+ *   confidenceScore — 0–100, penalises short-history funds
+ *   rating          — "Elite" | "Excellent" | "Strong" | "Above Average" | "Average" | "Weak" | "Avoid"
+ *   ratingColor     — tailwind text-* class matching the rating band
+ *   categoryRank    — 1-based rank within poolCategory (by finalScore)
+ *   metrics         — full 7-pillar EngineMetrics for detail pages
+ *   pillars         — per-pillar breakdown (null until scored)
  */
 export interface RankedFund {
   schemeCode: string;
@@ -45,18 +53,40 @@ export interface RankedFund {
   nav: number;
   category: string;
   poolCategory: string;
-  advScore: number | null;
-  metrics: FundMetrics;
-  calmar: number | null;
+  // Engine scoring (category-relative, 7-pillar)
+  fundScore:       number | null;
+  finalScore:      number | null;
+  confidenceScore: number | null;
+  rating:          string | null;
+  ratingColor:     string | null;
+  categoryRank:    number | null;
+  metrics: EngineMetrics;
+  pillars: EngineScoreResult["pillars"] | null;
 }
 
+// Per-category lists — merged and re-sorted into fullRankedList on every update
+const categoryListsStore = new Map<string, RankedFund[]>();
 let fullRankedList: RankedFund[] = [];
 type Listener = () => void;
 const listeners = new Set<Listener>();
 
 /**
- * Replace the full ranked list and notify all subscribers.
- * Called by Dashboard after each scoring milestone.
+ * Merge a newly-scored category into the global ranked list.
+ * Called by Dashboard's engine computation useEffect after each category is processed.
+ * Re-sorts the global list by finalScore descending and notifies all subscribers.
+ */
+export function mergeCategoryIntoStore(cat: string, funds: RankedFund[]): void {
+  categoryListsStore.set(cat, funds);
+  const all: RankedFund[] = [];
+  for (const list of categoryListsStore.values()) all.push(...list);
+  all.sort((a, b) => (b.finalScore ?? -1) - (a.finalScore ?? -1));
+  fullRankedList = all;
+  listeners.forEach((fn) => fn());
+}
+
+/**
+ * Replace the full ranked list directly and notify all subscribers.
+ * Use mergeCategoryIntoStore instead when updating per-category.
  */
 export function setFullRankedList(list: RankedFund[]): void {
   fullRankedList = list;
