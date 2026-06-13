@@ -25,15 +25,11 @@ import {
   classifyAMFICategory, QUANTFUND_CATEGORIES, type QuantFundCategory,
 } from "../lib/categories";
 import { fetchNavHistory, type NavHistory, type NavPoint } from "../lib/nav-history";
-import {
-  computeFundMetrics, quantFundScore, calmarRatio,
-  advancedPoolScore, type FundMetrics, type PoolFundData,
-} from "../lib/fund-metrics";
 import { fmtPct, fmtNum } from "../lib/format";
 import { AppShell } from "@/components/AppShell";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
-import { storeSeries, setFullRankedList, type RankedFund } from "../lib/fund-store";
-import { computeEngineMetrics, buildBenchmark, type EngineMetrics } from "../lib/scoring-engine";
+import { storeSeries, mergeCategoryIntoStore, subscribeToRankedList, getFullRankedList, type RankedFund } from "../lib/fund-store";
+import { computeEngineMetrics, buildBenchmark, scoreWithPeers, type EngineMetrics } from "../lib/scoring-engine";
 import { saveEngineCache, loadEngineCache } from "../lib/engine-cache";
 
 export const Route = createFileRoute("/dashboard")({
@@ -83,44 +79,12 @@ const CAT_TABS: QuantFundCategory[] = [
 
 const TOP_N = 10;
 
-// LocalStorage key — includes today's date so metrics auto-expire daily
-// (AMFI NAV publishes once daily so yesterday's metrics are still valid,
-// but using today's date keeps the key simple and predictable).
-const TODAY = new Date().toISOString().slice(0, 10);
-const LS_METRICS_KEY = `qf-metrics-v2-${TODAY}`;
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Types ─────────────────────────────────────────────────────────────────────
 
 type PoolEntry = AMFIScheme & { poolCategory: QuantFundCategory };
 
-interface CachedMetrics {
-  metrics: FundMetrics;
-  calmar: number | null;
-}
-
-interface ScoredOverall extends CachedMetrics {
-  scheme: PoolEntry;
-  advScore: number | null;
-}
-
-/** "direct" = Direct plan; "regular" = Regular plan. */
-type PlanBadge = "direct" | "regular";
-
-interface CatRow extends AMFIScheme {
-  badge: PlanBadge;
-  score: number | null;
-  ret1y: number | null;
-  cagr3y: number | null;
-  sharpe: number | null;
-  maxDD: number | null;
-}
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/** Derive plan badge from scheme name. */
-function planBadge(name: string): PlanBadge {
-  return /direct/i.test(name) ? "direct" : "regular";
-}
 
 function tone(v: number | null): string {
   if (v == null) return "text-muted-foreground";
@@ -190,24 +154,7 @@ function DashboardPage() {
   const { data: allSchemes, isLoading, isError, error } = useAMFISchemes();
   const [activeCategory, setActiveCategory] = useState<QuantFundCategory>("Large Cap");
 
-  // Per-fund metric cache — avoids recomputing on every render as pool grows.
-  const overallMetricCache = useRef<Map<string, CachedMetrics>>(new Map());
 
-  // Load today's metrics from localStorage and prime the in-memory cache once.
-  // Funds primed from localStorage skip NAV fetching entirely on reload.
-  const lsPrimed = useRef(false);
-  const localMetrics = useMemo((): Record<string, CachedMetrics> => {
-    try {
-      const raw = localStorage.getItem(LS_METRICS_KEY);
-      return raw ? (JSON.parse(raw) as Record<string, CachedMetrics>) : {};
-    } catch { return {}; }
-  }, []);
-  if (!lsPrimed.current) {
-    for (const [code, cm] of Object.entries(localMetrics)) {
-      overallMetricCache.current.set(code, cm);
-    }
-    lsPrimed.current = true;
-  }
 
   const activeSchemes = useMemo(
     () => (allSchemes ? filterActiveSchemes(allSchemes) : []),
@@ -237,10 +184,11 @@ function DashboardPage() {
   // Browser fetches with high concurrency (100) are reliable and fast.
   // Computed metrics are cached in localStorage so reloads are instant.
 
-  // Skip fetching funds whose metrics are already in localStorage
+  // Skip fetching funds whose engine metrics are already cached for today
+  const engineCacheOnMount = useRef(loadEngineCache());
   const freshCandidates = useMemo(
-    () => overallCandidates.filter((s) => !localMetrics[s.schemeCode]),
-    [overallCandidates, localMetrics],
+    () => overallCandidates.filter((s) => !engineCacheOnMount.current.has(s.schemeCode)),
+    [overallCandidates],
   );
 
   const overallNavQ = useQueries({
@@ -278,15 +226,7 @@ function DashboardPage() {
   const overallTotal   = overallCandidates.length;
   const overallDone    = overallSettled === overallTotal && overallTotal > 0;
 
-  // Save all computed metrics to localStorage once loading finishes
-  useEffect(() => {
-    if (!overallDone || overallMetricCache.current.size === 0) return;
-    try {
-      const obj: Record<string, CachedMetrics> = {};
-      for (const [code, cm] of overallMetricCache.current) obj[code] = cm;
-      localStorage.setItem(LS_METRICS_KEY, JSON.stringify(obj));
-    } catch { /* quota exceeded — no-op */ }
-  }, [overallDone]);
+
 
   // Populate shared fund-store as NAV data arrives so other pages (Rankings,
   // Screener, Fund Detail) can read it instantly via initialData — no re-fetch.
@@ -297,130 +237,114 @@ function DashboardPage() {
   }, [freshNavMap]);
 
   // After all NAV data is loaded, compute 7-pillar EngineMetrics in the
-  // background and persist to engine-cache.  When the user navigates to
-  // Rankings, metricCache is pre-loaded and the page renders instantly.
-  // Processing is split across setTimeout ticks so it never freezes the UI.
+  // background, score each category with scoreWithPeers(), and export results
+  // progressively to fund-store. The UI subscribes to fund-store and re-renders
+  // as each category becomes available.
+  //
+  // BUG FIX: previous version returned early if byCategory.size===0 (all in
+  // cache), so scores were NEVER exported to fund-store on reload. Fixed: we
+  // always iterate ALL categories for scoring even when no computation is needed.
   useEffect(() => {
     if (!overallDone || overallCandidates.length === 0) return;
 
     const existingCache = loadEngineCache();
 
-    // Group by category — only compute what is missing and where we have series
-    const byCategory = new Map<QuantFundCategory, { code: string; series: NavPoint[] }[]>();
+    // Funds that need fresh metric computation (not in today's engine-cache)
+    const toCompute = new Map<QuantFundCategory, { code: string; series: NavPoint[] }[]>();
     for (const s of overallCandidates) {
       if (existingCache.has(s.schemeCode)) continue;
       const series = freshNavMap.get(s.schemeCode)?.series;
       if (!series?.length) continue;
-      let arr = byCategory.get(s.poolCategory);
-      if (!arr) { arr = []; byCategory.set(s.poolCategory, arr); }
+      let arr = toCompute.get(s.poolCategory);
+      if (!arr) { arr = []; toCompute.set(s.poolCategory, arr); }
       arr.push({ code: s.schemeCode, series });
     }
 
-    if (byCategory.size === 0) return;
-
-    const cats = [...byCategory.keys()];
+    // Score ALL categories — even when metrics are cached we still need to
+    // run scoreWithPeers() so fund-store is populated and the UI shows results.
+    const allCats = [...new Set(overallCandidates.map(s => s.poolCategory))];
     let catIdx = 0;
 
     const processNextCategory = () => {
-      if (catIdx >= cats.length) return;
-      const cat = cats[catIdx++];
-      const entries = byCategory.get(cat)!;
+      if (catIdx >= allCats.length) return;
+      const cat = allCats[catIdx++];
 
-      // All category series needed for building the equal-weighted benchmark
-      const allCatSeries = overallCandidates
-        .filter((s) => s.poolCategory === cat)
-        .map((s) => freshNavMap.get(s.schemeCode)?.series)
-        .filter((s): s is NavPoint[] => !!s && s.length > 0);
+      // Step A — Compute engine metrics for any new funds in this category
+      const newFunds = toCompute.get(cat) ?? [];
+      if (newFunds.length > 0) {
+        const allCatSeries = overallCandidates
+          .filter(s => s.poolCategory === cat)
+          .map(s => freshNavMap.get(s.schemeCode)?.series)
+          .filter((s): s is NavPoint[] => !!s && s.length > 0);
 
-      if (allCatSeries.length >= 2) {
-        const benchmark = buildBenchmark(allCatSeries);
-        const newEntries = new Map<string, EngineMetrics>();
-        for (const { code, series } of entries) {
-          newEntries.set(code, computeEngineMetrics(series, benchmark));
+        if (allCatSeries.length >= 2) {
+          const bm = buildBenchmark(allCatSeries);
+          const newEntries = new Map<string, EngineMetrics>();
+          for (const { code, series } of newFunds) {
+            newEntries.set(code, computeEngineMetrics(series, bm ?? undefined));
+          }
+          saveEngineCache(newEntries);
         }
-        saveEngineCache(newEntries);
+      }
+
+      // Step B — Score this full category using all available engine metrics
+      const freshCache = loadEngineCache();
+      const catSchemes  = overallCandidates.filter(s => s.poolCategory === cat);
+      const peers: EngineMetrics[] = [];
+      const fundEntries: { scheme: PoolEntry; metrics: EngineMetrics }[] = [];
+      for (const s of catSchemes) {
+        const m = freshCache.get(s.schemeCode);
+        if (m) { peers.push(m); fundEntries.push({ scheme: s, metrics: m }); }
+      }
+
+      if (peers.length >= 3) {
+        const scored = fundEntries.map(({ scheme, metrics }) => {
+          const result = scoreWithPeers(metrics, peers);
+          return {
+            schemeCode:      scheme.schemeCode,
+            schemeName:      scheme.schemeName,
+            amc:             scheme.amc,
+            nav:             scheme.nav,
+            category:        scheme.category,
+            poolCategory:    scheme.poolCategory as string,
+            fundScore:       result.fundScore,
+            finalScore:      result.finalScore,
+            confidenceScore: result.confidenceScore,
+            rating:          result.rating,
+            ratingColor:     result.ratingColor,
+            categoryRank:    0,
+            metrics,
+            pillars:         result.pillars,
+          } as RankedFund;
+        });
+        scored.sort((a, b) => (b.finalScore ?? -1) - (a.finalScore ?? -1));
+        scored.forEach((f, i) => { f.categoryRank = i + 1; });
+        mergeCategoryIntoStore(cat, scored);
       }
 
       // Yield to the UI thread between categories so Dashboard stays responsive
       setTimeout(processNextCategory, 12);
     };
 
-    // Start 1 second after Dashboard finishes rendering so it doesn't compete
-    setTimeout(processNextCategory, 1000);
+    // If all metrics are in cache, start immediately; otherwise wait 1 s so
+    // the Dashboard finishes its initial render before the CPU-heavy scoring.
+    setTimeout(processNextCategory, toCompute.size === 0 ? 0 : 1000);
   }, [overallDone]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Overall scoring ───────────────────────────────────────────────────────
-  // Two concerns pulled apart:
-  //   • Cache fill  (O(n per new fund)) — runs inline on every freshNavMap update
-  //   • Pool scoring (O(n²))           — skipped between milestones via ref so
-  //                                      downstream memos/effects don't cascade
-  //
-  // Returning the same ref between milestones means React sees no change in
-  // overallAllScored, so overallRanked / fund-store export don't re-run.
-  const lastScoredRef    = useRef<ScoredOverall[]>([]);
-  const lastScoreSizeRef = useRef(0);
+  // ── Engine rankings from fund-store ──────────────────────────────────────
+  // fund-store is populated progressively by the engine computation useEffect
+  // above. We subscribe here so Dashboard re-renders whenever a new category
+  // is scored and exported.
+  const [allRanked, setAllRankedState] = useState<RankedFund[]>(getFullRankedList);
+  useEffect(() => subscribeToRankedList(() => setAllRankedState(getFullRankedList())), []);
 
-  const overallAllScored = useMemo((): ScoredOverall[] => {
-    // Fill metric cache for any newly-loaded fund (fast — O(history_len))
-    const pool: ScoredOverall[] = [];
-    for (const s of overallCandidates) {
-      let cached = overallMetricCache.current.get(s.schemeCode);
-      if (!cached) {
-        const history = freshNavMap.get(s.schemeCode);
-        if (!history) continue;
-        const metrics = computeFundMetrics(history.series);
-        cached = { metrics, calmar: calmarRatio(metrics) };
-        overallMetricCache.current.set(s.schemeCode, cached);
-      }
-      pool.push({ scheme: s, ...cached, advScore: null });
-    }
-    if (pool.length < 3) return lastScoredRef.current;
+  // Table 1: top 10 across all categories, globally sorted by finalScore
+  const overallRanked = useMemo(() => allRanked.slice(0, TOP_N), [allRanked]);
 
-    // Only score the pool at milestones — every 25 new funds or when done.
-    // Between milestones we return the previous reference, so nothing downstream
-    // re-renders and the O(n²) advancedPoolScore is called ~40× total, not ~1000×.
-    const BATCH = 25;
-    const atMilestone =
-      overallDone ||
-      Math.floor(pool.length / BATCH) > Math.floor(lastScoreSizeRef.current / BATCH);
-    if (!atMilestone) return lastScoredRef.current;
-
-    lastScoreSizeRef.current = pool.length;
-    const scored = pool.map((f) => ({
-      ...f,
-      advScore: advancedPoolScore(f, pool),
-    }));
-    scored.sort((a, b) => (b.advScore ?? -1) - (a.advScore ?? -1));
-    lastScoredRef.current = scored;
-    return scored;
-  }, [overallCandidates, freshNavMap, overallDone]);
-
-  // Dashboard Table 1: top 10 from the scored pool
-  const overallRanked = useMemo(() => overallAllScored.slice(0, TOP_N), [overallAllScored]);
-
-  // Export milestone results to fund-store — Rankings reads this instantly
-  useEffect(() => {
-    if (overallAllScored.length === 0) return;
-    setFullRankedList(
-      overallAllScored.map((f): RankedFund => ({
-        schemeCode:   f.scheme.schemeCode,
-        schemeName:   f.scheme.schemeName,
-        amc:          f.scheme.amc,
-        nav:          f.scheme.nav,
-        category:     f.scheme.category,
-        poolCategory: f.scheme.poolCategory,
-        advScore:     f.advScore,
-        metrics:      f.metrics,
-        calmar:       f.calmar,
-      })),
-    );
-  }, [overallAllScored]);
-
-  // ── Category pool — reads directly from Table 1's cache ─────────────────
-  // NO separate useQueries. Table 1 already fetched and computed metrics for
-  // every direct-growth fund in every category. Table 2 just filters
-  // overallCandidates by the active category and reads from overallMetricCache.
-  // Switching categories is INSTANT — zero new network requests.
+  // ── Category pool ─────────────────────────────────────────────────────────
+  // catCandidates: all Direct-Growth funds in the active category
+  // catRanked:     top 10 from fund-store for this category (engine scored)
+  // Switching categories is INSTANT — no additional network requests needed.
 
   const catCandidates = useMemo(
     () => overallCandidates.filter((s) => s.poolCategory === activeCategory),
@@ -428,43 +352,16 @@ function DashboardPage() {
   );
 
   const catTotal  = catCandidates.length;
-  // Re-evaluate whenever freshNavMap updates (proxy for "Table 1 loaded more data")
-  const catLoaded = useMemo(
-    () => catCandidates.filter((s) => overallMetricCache.current.has(s.schemeCode)).length,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [catCandidates, overallLoaded], // integer, not freshNavMap object — avoids starvation
+  const catRanked = useMemo(
+    () => allRanked.filter(f => f.poolCategory === activeCategory).slice(0, TOP_N),
+    [allRanked, activeCategory],
   );
-  const catDone = overallDone || (catLoaded === catTotal && catTotal > 0);
-
-  const catRanked = useMemo((): CatRow[] => {
-    const rows: CatRow[] = catCandidates.map((s) => {
-      const badge  = planBadge(s.schemeName);
-      const cached = overallMetricCache.current.get(s.schemeCode);
-      if (!cached) {
-        return { ...s, badge, score: null, ret1y: null, cagr3y: null, sharpe: null, maxDD: null };
-      }
-      const m = cached.metrics;
-      return {
-        ...s,
-        badge,
-        score:  quantFundScore(m),
-        ret1y:  m.ret1y,
-        cagr3y: m.cagr3y,
-        sharpe: m.sharpe,
-        maxDD:  m.maxDrawdown,
-      };
-    });
-    const loaded = rows.filter((r) => r.score !== null);
-    loaded.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
-    return loaded.slice(0, TOP_N);
-  // overallLoaded (integer) replaces freshNavMap — triggers re-run as Table 1
-  // populates overallMetricCache, but doesn't create a new object reference each time
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catCandidates, overallLoaded]);
+  const catLoaded = catRanked.length;
+  const catDone   = catLoaded > 0 && catLoaded === catTotal;
 
   // ── KPI strip ────────────────────────────────────────────────────────────
-  const topAdvScore  = overallRanked[0]?.advScore ?? null;
-  const topCatScore  = catRanked[0]?.score ?? null;
+  const topScore    = overallRanked[0]?.finalScore ?? null;
+  const topCatScore = catRanked[0]?.finalScore ?? null;
   const universeSize = activeSchemes.length;
   const asOf         = allSchemes?.[0]?.date ?? null;
 
@@ -523,8 +420,8 @@ function DashboardPage() {
           <KpiTile icon={Activity} label="Pool / scored"
             value={`${overallLoaded.toLocaleString()} / ${overallTotal.toLocaleString()}`}
             sub={`${OVERALL_POOL_CATEGORIES.length} cats`} />
-          <KpiTile icon={Star}     label="Top adv. score"
-            value={topAdvScore != null ? fmtNum(topAdvScore, 1) : "—"} tone="cyan" />
+          <KpiTile icon={Star}     label="Top engine score"
+            value={topScore != null ? fmtNum(topScore, 1) : "—"} tone="cyan" />
           <KpiTile icon={TrendingUp} label="Top cat. score"
             value={topCatScore != null ? fmtNum(topCatScore, 1) : "—"} tone="cyan" />
         </div>
@@ -539,7 +436,7 @@ function DashboardPage() {
               <Medal className="h-4 w-4 text-cyan" />
               <h2 className="font-display text-base font-bold tracking-tight">Overall Top 10</h2>
               <span className="rounded-lg border border-cyan/30 bg-cyan/[0.07] px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-cyan">
-                Advanced Score · All {OVERALL_POOL_CATEGORIES.length} Categories
+                Engine Score · All {OVERALL_POOL_CATEGORIES.length} Categories
               </span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -547,21 +444,22 @@ function DashboardPage() {
               {" "}{overallCandidates.toLocaleString !== undefined
                 ? overallCandidates.length.toLocaleString()
                 : overallCandidates.length} funds in pool.
-              Each fund is percentile-ranked on 6 risk-adjusted factors so debt, hybrid and
-              equity funds compete on equal footing.
-              <InfoTip text="Advanced Score = Sharpe (28%) + Sortino (22%) + Calmar = CAGR3Y/|MaxDD| (20%) + 3Y CAGR (15%) + Rolling 1Y Positive % (10%) + Max Drawdown (5%). Every factor is percentile-ranked within the entire loaded pool before weighting." />
+              7-pillar institutional scoring: Consistency (23%), Risk-Adjusted (20%), Downside Protection (20%),
+              Cost Efficiency (15%), Portfolio Quality (12%), Short-Term (5%), Management (5%).
+              <InfoTip text="Each pillar scored as a category-relative percentile within the fund's peer group. Final Score = fundScore × 90% + confidenceScore × 10%. Confidence penalises short-history funds." />
             </p>
           </div>
 
           {/* Factor weight strip */}
           <div className="mb-3 flex flex-wrap gap-2">
             {[
-              { label: "Sharpe",   pct: "28%", note: "Return / total vol" },
-              { label: "Sortino",  pct: "22%", note: "Return / downside vol" },
-              { label: "Calmar",   pct: "20%", note: "CAGR3Y / |MaxDD|" },
-              { label: "3Y CAGR",  pct: "15%", note: "Compounded return" },
-              { label: "Rolling+", pct: "10%", note: "% positive 1Y windows" },
-              { label: "Max DD",   pct:  "5%", note: "Lower is better" },
+              { label: "LT Consistency", pct: "23%", note: "3Y/5Y/7Y/10Y CAGR + beat rate" },
+              { label: "Risk-Adjusted",  pct: "20%", note: "Sortino + Sharpe + IR" },
+              { label: "Downside Prot.", pct: "20%", note: "Capture ratios + MaxDD" },
+              { label: "Cost Efficiency",pct: "15%", note: "Jensen's α + Tracking Error" },
+              { label: "Port. Quality",  pct: "12%", note: "Calmar + Omega + StdDev" },
+              { label: "Short-Term",     pct:  "5%", note: "1M/3M/6M returns" },
+              { label: "Management",     pct:  "5%", note: "Longevity + Bear Market" },
             ].map((f) => (
               <div key={f.label}
                 className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[10px]">
@@ -597,8 +495,8 @@ function DashboardPage() {
                       <th className="p-3 font-medium">Scheme</th>
                       <th className="p-3 font-medium">Category</th>
                       <th className="p-3 text-right font-medium">
-                        Adv. Score
-                        <InfoTip text="0–100, percentile-relative to all loaded schemes. Scores shift as the pool grows — final ranking is stable once all funds are loaded." />
+                        Engine Score
+                        <InfoTip text="7-pillar institutional score (0–100). Category-relative percentile. Final Score = fundScore×90% + confidenceScore×10%." />
                       </th>
                       <th className="p-3 text-right font-medium">Sharpe</th>
                       <th className="p-3 text-right font-medium">Sortino</th>
@@ -612,7 +510,7 @@ function DashboardPage() {
                       const isTop3 = idx < 3;
                       const m = f.metrics;
                       return (
-                        <tr key={f.scheme.schemeCode}
+                        <tr key={f.schemeCode}
                           className={`transition-colors hover:bg-cyan/[0.05] ${isTop3 ? "bg-cyan/[0.025]" : ""}`}>
 
                           <td className="p-3 font-mono text-[11px] font-bold tabular-nums">
@@ -622,28 +520,28 @@ function DashboardPage() {
                           </td>
 
                           <td className="p-3">
-                            <Link to="/fund/$id" params={{ id: f.scheme.schemeCode }}
+                            <Link to="/fund/$id" params={{ id: f.schemeCode }}
                               className="block max-w-[240px] text-[12px] font-semibold leading-snug text-foreground transition-colors hover:text-cyan">
-                              {f.scheme.schemeName}
+                              {f.schemeName}
                             </Link>
                             <p className="mt-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-                              {f.scheme.amc}
+                              {f.amc}
                             </p>
                           </td>
 
                           <td className="p-3">
                             <span className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-[8px] uppercase tracking-wider text-muted-foreground">
-                              {f.scheme.poolCategory}
+                              {f.poolCategory}
                             </span>
                           </td>
 
                           <td className="p-3 text-right">
-                            {f.advScore != null ? (
+                            {f.finalScore != null ? (
                               <div className="inline-flex flex-col items-end gap-1">
                                 <span className="font-mono text-[13px] font-bold tabular-nums text-cyan">
-                                  {fmtNum(f.advScore, 1)}
+                                  {fmtNum(f.finalScore, 1)}
                                 </span>
-                                <ScoreBar value={f.advScore} />
+                                <ScoreBar value={f.finalScore} />
                               </div>
                             ) : (
                               <span className="font-mono text-[10px] text-muted-foreground">—</span>
@@ -656,8 +554,8 @@ function DashboardPage() {
                           <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(m.sortino)}`}>
                             {fmtNum(m.sortino, 2)}
                           </td>
-                          <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(f.calmar)}`}>
-                            {fmtNum(f.calmar, 2)}
+                          <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(m.calmarRatio)}`}>
+                            {fmtNum(m.calmarRatio, 2)}
                           </td>
                           <td className={`p-3 text-right font-mono text-[11px] font-bold tabular-nums ${tone(m.cagr3y)}`}>
                             {fmtPct(m.cagr3y, { signed: true })}
@@ -675,7 +573,7 @@ function DashboardPage() {
 
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-background/40 px-4 py-2.5">
               <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-                {overallLoaded.toLocaleString()} scored · {overallTotal.toLocaleString()} total · top {TOP_N} shown
+                {allRanked.length.toLocaleString()} scored · {overallTotal.toLocaleString()} total · top {TOP_N} shown
               </span>
               {overallDone ? (
                 <span className="flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-wider text-positive">
@@ -690,9 +588,9 @@ function DashboardPage() {
           </div>
 
           <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
-            Advanced Score is <span className="text-foreground">percentile-relative</span> — a score of 85
-            means this fund outranks ~85% of the entire pool on the weighted composite.
-            Scores shift until all {overallTotal} funds are loaded; final order is stable after that.
+            Engine Score is <span className="text-foreground">category-relative</span> — a fund is ranked against its
+            direct category peers, not the entire universe. Final Score = fundScore × 90% + confidenceScore × 10%.
+            Higher confidence = longer NAV history &amp; more data completeness.
           </p>
         </section>
 
@@ -706,7 +604,7 @@ function DashboardPage() {
               <BarChart2 className="h-4 w-4 text-cyan" />
               <h2 className="font-display text-base font-bold tracking-tight">Category Top 10</h2>
               <span className="rounded-lg border border-cyan/30 bg-cyan/[0.07] px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-cyan">
-                QF Score · Direct Growth Only
+                Engine Score · Direct Growth Only
               </span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -757,7 +655,7 @@ function DashboardPage() {
               <div className="py-16 text-center font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
                 No schemes found in {activeCategory}
               </div>
-            ) : catRanked.filter((r) => r.score !== null).length === 0 ? (
+            ) : catRanked.length === 0 && overallLoaded > 0 ? (
               <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin text-cyan" />
                 <p className="font-mono text-[11px] uppercase tracking-widest">
@@ -772,10 +670,10 @@ function DashboardPage() {
                       <th className="p-3 font-medium">Rk</th>
                       <th className="p-3 font-medium">Scheme</th>
                       <th className="p-3 text-right font-medium">
-                        QF Score
-                        <InfoTip text="CAGR3Y (35%) + Sharpe (25%) + Max Drawdown (20%) + Rolling 1Y Positive % (20%). Valid within a single category only." />
+                        Engine Score
+                        <InfoTip text="7-pillar institutional score, category-relative percentile. Final Score = fundScore × 90% + confidence × 10%." />
                       </th>
-                      <th className="p-3 text-right font-medium">1Y Ret</th>
+                      <th className="p-3 text-right font-medium">6M Ret</th>
                       <th className="p-3 text-right font-medium">3Y CAGR</th>
                       <th className="p-3 text-right font-medium">Sharpe</th>
                       <th className="p-3 text-right font-medium">Max DD</th>
@@ -812,29 +710,29 @@ function DashboardPage() {
                           </td>
 
                           <td className="p-3 text-right">
-                            {s.score != null ? (
+                            {s.finalScore != null ? (
                               <div className="inline-flex flex-col items-end gap-1">
                                 <span className="font-mono text-[12px] font-bold tabular-nums text-cyan">
-                                  {fmtNum(s.score, 1)}
+                                  {fmtNum(s.finalScore, 1)}
                                 </span>
-                                <ScoreBar value={s.score} />
+                                <ScoreBar value={s.finalScore} />
                               </div>
                             ) : (
-                              <Loader2 className="ml-auto h-3 w-3 animate-spin text-muted-foreground" />
+                              <span className="font-mono text-[10px] text-muted-foreground">—</span>
                             )}
                           </td>
 
-                          <td className={`p-3 text-right font-mono text-[11px] font-bold tabular-nums ${tone(s.ret1y)}`}>
-                            {fmtPct(s.ret1y, { signed: true })}
+                          <td className={`p-3 text-right font-mono text-[11px] font-bold tabular-nums ${tone(s.metrics.ret6m)}`}>
+                            {fmtPct(s.metrics.ret6m, { signed: true })}
                           </td>
-                          <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(s.cagr3y)}`}>
-                            {fmtPct(s.cagr3y, { signed: true })}
+                          <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(s.metrics.cagr3y)}`}>
+                            {fmtPct(s.metrics.cagr3y, { signed: true })}
                           </td>
-                          <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(s.sharpe)}`}>
-                            {fmtNum(s.sharpe, 2)}
+                          <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(s.metrics.sharpe)}`}>
+                            {fmtNum(s.metrics.sharpe, 2)}
                           </td>
-                          <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(s.maxDD)}`}>
-                            {fmtPct(s.maxDD, { signed: true })}
+                          <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(s.metrics.maxDrawdown)}`}>
+                            {fmtPct(s.metrics.maxDrawdown, { signed: true })}
                           </td>
                         </tr>
                       );
@@ -846,7 +744,7 @@ function DashboardPage() {
 
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-background/40 px-4 py-2.5">
               <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-                {catLoaded}/{catTotal} scored{catDone && <span className="text-positive"> · from overall pool</span>}
+                {catLoaded}/{catTotal} scored{catDone ? <span className="text-positive ml-1">· final</span> : null}
               </span>
               <Link to="/rankings"
                 className="font-mono text-[9px] uppercase tracking-wider text-cyan transition-colors hover:text-cyan/80">
@@ -856,8 +754,8 @@ function DashboardPage() {
           </div>
 
           <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
-            <span className="text-foreground">QuantFund Score</span> is within-category only — not valid across
-            categories. Data:{" "}
+            <span className="text-foreground">Engine Score</span> is category-relative — each fund is scored against its direct peers.
+            Final Score = fundScore × 90% + confidenceScore × 10%. Data:{" "}
             <a href="https://www.amfiindia.com" target="_blank" rel="noopener noreferrer"
               className="text-cyan underline underline-offset-2">AMFI India</a>{" "}
             &{" "}
