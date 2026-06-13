@@ -1,17 +1,15 @@
 /**
- * dashboard.tsx — Terminal direction
- *
- * All numbers shown here are computed from REAL data:
- *   • Universe + NAV: AMFI NAVAll
- *   • Per-fund metrics: NAV history from api.mfapi.in → fund-metrics.ts
- *
- * No synthetic scoring. Funds that don't have enough history show "—".
+ * dashboard.tsx — Overview: top-ranked funds per SEBI category.
+ * All metrics are computed from real AMFI + mfapi.in NAV history.
  */
 
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
-import { AlertCircle, Loader2, Info } from "lucide-react";
+import {
+  AlertCircle, Loader2, Info, TrendingUp, Layers,
+  CheckCircle2, Star, BarChart2, Activity,
+} from "lucide-react";
 import { useAMFISchemes, filterActiveSchemes, type AMFIScheme } from "../lib/live-data";
 import { classifyAMFICategory, type QuantFundCategory } from "../lib/categories";
 import { fetchNavHistory } from "../lib/nav-history";
@@ -35,16 +33,10 @@ export const Route = createFileRoute("/dashboard")({
 });
 
 const DASHBOARD_CATEGORIES: QuantFundCategory[] = [
-  "Large Cap",
-  "Mid Cap",
-  "Small Cap",
-  "Flexi Cap",
-  "ELSS",
-  "Aggressive Hybrid",
-  "Short Duration",
+  "Large Cap", "Mid Cap", "Small Cap", "Flexi Cap",
+  "ELSS", "Aggressive Hybrid", "Short Duration",
 ];
 
-// Max schemes per category to score (each costs one mfapi.in request).
 const TOP_N = 25;
 
 function DashboardPage() {
@@ -56,20 +48,15 @@ function DashboardPage() {
     [allSchemes],
   );
 
-  // Candidate set for the active category. We pick the N largest-NAV growth
-  // plans as a proxy for the most-tracked schemes — fully transparent: we tell
-  // users this is a curated subset.
   const candidates = useMemo(() => {
     const inCat = activeSchemes.filter(
       (s) => classifyAMFICategory(s.category) === activeCategory,
     );
-    // Prefer "Direct Growth" plans; fall back to whatever's available.
     const direct = inCat.filter((s) => /direct/i.test(s.schemeName) && /growth/i.test(s.schemeName));
     const pool = direct.length >= 10 ? direct : inCat;
     return pool.slice(0, TOP_N);
   }, [activeSchemes, activeCategory]);
 
-  // Fan-out NAV history fetches. TanStack Query dedupes & caches.
   const navQueries = useQueries({
     queries: candidates.map((s) => ({
       queryKey: ["nav-history", s.schemeCode],
@@ -81,29 +68,18 @@ function DashboardPage() {
 
   const navLoaded = navQueries.filter((q) => q.data).length;
   const navTotal = navQueries.length;
+  const allReady = navLoaded === navTotal && navTotal > 0;
 
   const ranked = useMemo(() => {
     type Row = AMFIScheme & {
-      score: number | null;
-      ret1y: number | null;
-      cagr3y: number | null;
-      sharpe: number | null;
-      maxDD: number | null;
+      score: number | null; ret1y: number | null; cagr3y: number | null;
+      sharpe: number | null; maxDD: number | null;
     };
     const rows: Row[] = candidates.map((s, i) => {
       const history = navQueries[i]?.data;
-      if (!history) {
-        return { ...s, score: null, ret1y: null, cagr3y: null, sharpe: null, maxDD: null };
-      }
+      if (!history) return { ...s, score: null, ret1y: null, cagr3y: null, sharpe: null, maxDD: null };
       const m = computeFundMetrics(history.series);
-      return {
-        ...s,
-        score: quantFundScore(m),
-        ret1y: m.ret1y,
-        cagr3y: m.cagr3y,
-        sharpe: m.sharpe,
-        maxDD: m.maxDrawdown,
-      };
+      return { ...s, score: quantFundScore(m), ret1y: m.ret1y, cagr3y: m.cagr3y, sharpe: m.sharpe, maxDD: m.maxDrawdown };
     });
     rows.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
     return rows.slice(0, 10);
@@ -118,18 +94,12 @@ function DashboardPage() {
     return (
       <AppShell title="Dashboard">
         <div className="mx-auto max-w-4xl">
-          <div className="flex gap-4 rounded-sm border border-negative/40 bg-negative/10 p-6">
-            <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-negative" />
+          <div className="flex gap-4 rounded-xl border border-negative/40 bg-negative/10 p-6">
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-negative" />
             <div>
-              <h2 className="mb-1 font-display text-sm font-semibold uppercase tracking-widest text-negative">
-                Fund data unavailable
-              </h2>
-              <p className="mb-2 text-sm text-muted-foreground">
-                Rankings cannot be displayed because the AMFI data source is currently unreachable.
-              </p>
-              <p className="font-mono text-xs text-negative/70">
-                {(error as Error)?.message ?? "Unknown error"}
-              </p>
+              <h2 className="mb-1 font-display text-sm font-semibold uppercase tracking-widest text-negative">Fund data unavailable</h2>
+              <p className="mb-2 text-sm text-muted-foreground">Rankings cannot be displayed — AMFI data source is currently unreachable.</p>
+              <p className="font-mono text-xs text-negative/70">{(error as Error)?.message ?? "Unknown error"}</p>
             </div>
           </div>
         </div>
@@ -153,8 +123,10 @@ function DashboardPage() {
 
   return (
     <AppShell title="Dashboard">
-      <div className="mx-auto max-w-5xl">
-        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+      <div className="mx-auto max-w-5xl space-y-6">
+
+        {/* Header */}
+        <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="font-display text-2xl font-bold tracking-tight">Dashboard</h1>
             <p className="mt-1 font-mono text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -164,52 +136,68 @@ function DashboardPage() {
           <DataSourceBadge source="AMFI + mfapi.in" asOf={asOf} note="NAV updates once daily after market close." />
         </div>
 
-        <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <KpiTile label="Median 1Y Ret" value={medianRet != null ? fmtPct(medianRet, { signed: true }) : "—"} tone={medianRet != null && medianRet >= 0 ? "positive" : medianRet != null ? "negative" : undefined} />
-          <KpiTile label="Universe" value={universeSize.toLocaleString()} />
-          <KpiTile label="Scored" value={`${navLoaded}/${navTotal}`} suffix={navLoaded < navTotal ? "loading" : "ready"} />
-          <KpiTile label="Top Score" value={ranked[0]?.score != null ? fmtNum(ranked[0].score, 1) : "—"} tone="cyan" />
+        {/* KPI tiles */}
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <KpiTile icon={TrendingUp} label="Median 1Y Ret"
+            value={medianRet != null ? fmtPct(medianRet, { signed: true }) : "—"}
+            tone={medianRet != null ? (medianRet >= 0 ? "positive" : "negative") : undefined} />
+          <KpiTile icon={Layers} label="Universe" value={universeSize.toLocaleString()} />
+          <KpiTile
+            icon={allReady ? CheckCircle2 : Activity}
+            label="Scored"
+            value={`${navLoaded}/${navTotal}`}
+            suffix={allReady ? "ready" : "loading"}
+            tone={allReady ? "positive" : undefined} />
+          <KpiTile icon={Star} label="Top Score"
+            value={ranked[0]?.score != null ? fmtNum(ranked[0].score, 1) : "—"}
+            tone="cyan" />
         </div>
 
-        <div className="no-scrollbar mb-6 flex gap-2 overflow-x-auto pb-1">
+        {/* Category pills */}
+        <div className="no-scrollbar flex gap-2 overflow-x-auto pb-1">
           {DASHBOARD_CATEGORIES.map((cat) => {
             const active = cat === activeCategory;
             return (
-              <button
-                key={cat}
-                onClick={() => setActiveCategory(cat)}
-                className={`shrink-0 rounded-sm px-3 py-1 font-mono text-[10px] font-bold uppercase tracking-widest transition-colors ${
+              <button key={cat} onClick={() => setActiveCategory(cat)}
+                className={`shrink-0 rounded-lg px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-widest transition-all duration-150 ${
                   active
-                    ? "bg-cyan text-background shadow-[0_0_10px_rgba(34,211,238,0.25)]"
-                    : "border border-border bg-surface text-muted-foreground hover:border-cyan/40 hover:text-foreground"
-                }`}
-              >
+                    ? "bg-cyan text-background shadow-[0_0_12px_rgba(34,211,238,0.3)]"
+                    : "border border-border bg-surface text-muted-foreground hover:border-cyan/50 hover:text-foreground"
+                }`}>
                 {cat}
               </button>
             );
           })}
         </div>
 
-        <div className="mb-8 overflow-hidden rounded-sm border border-border bg-surface shadow-2xl">
-          <div className="flex items-center justify-between border-b border-border bg-background/60 p-3">
-            <span className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-cyan">
-              Top Ranked — {activeCategory}
-            </span>
-            <span className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
-              Scoring {navLoaded}/{navTotal}
-              <InfoTooltip text={`Top ${TOP_N} Direct-Growth schemes in this category are scored from real NAV history. Loading is parallel and cached for 12h.`} />
+        {/* Ranked table */}
+        <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-2xl">
+          <div className="flex items-center justify-between border-b border-border bg-background/60 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <BarChart2 className="h-3.5 w-3.5 text-cyan" />
+              <span className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-cyan">
+                Top Ranked — {activeCategory}
+              </span>
+            </div>
+            <span className="flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
+              {allReady ? (
+                <><CheckCircle2 className="h-3 w-3 text-positive" /> {navLoaded} scored</>
+              ) : (
+                <><Loader2 className="h-3 w-3 animate-spin" /> Scoring {navLoaded}/{navTotal}</>
+              )}
+              <InfoTooltip text={`Top ${TOP_N} Direct-Growth schemes are scored from real NAV history. Results are cached for 12h.`} />
             </span>
           </div>
 
           {candidates.length === 0 ? (
-            <div className="py-10 text-center font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-              No schemes in {activeCategory}
+            <div className="py-16 text-center font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
+              No schemes found in {activeCategory}
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b border-border bg-background/40 font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
+                <thead className="sticky top-0 z-10">
+                  <tr className="border-b border-border bg-background/90 font-mono text-[9px] uppercase tracking-widest text-muted-foreground backdrop-blur">
                     <th className="p-3 font-medium">Rk</th>
                     <th className="p-3 font-medium">Scheme</th>
                     <th className="p-3 text-right font-medium">Score</th>
@@ -220,71 +208,73 @@ function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {ranked.map((s, idx) => (
-                    <tr key={s.schemeCode} className="group transition-colors hover:bg-cyan/[0.04]">
-                      <td className="p-3 font-mono text-[11px] font-bold tabular-nums text-muted-foreground">
-                        {String(idx + 1).padStart(2, "0")}
-                      </td>
-                      <td className="p-3">
-                        <Link
-                          to="/fund/$id"
-                          params={{ id: s.schemeCode }}
-                          className="text-[12px] font-semibold leading-tight text-foreground hover:text-cyan"
-                        >
-                          {s.schemeName}
-                        </Link>
-                        <div className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-                          {s.amc} · NAV ₹{s.nav.toFixed(2)}
-                        </div>
-                      </td>
-                      <td className="p-3 text-right">
-                        {s.score != null ? (
-                          <div className="inline-flex flex-col items-end">
-                            <span className="font-mono text-[11px] font-bold tabular-nums text-cyan">
-                              {fmtNum(s.score, 1)}
-                            </span>
-                            <div className="mt-0.5 h-1 w-10 overflow-hidden rounded-full bg-border">
-                              <div className="h-full bg-cyan" style={{ width: `${Math.min(100, s.score)}%` }} />
-                            </div>
+                  {ranked.map((s, idx) => {
+                    const isTop3 = idx < 3;
+                    return (
+                      <tr key={s.schemeCode}
+                        className={`group transition-colors hover:bg-cyan/[0.05] ${isTop3 ? "bg-cyan/[0.02]" : ""}`}>
+                        <td className="p-3 font-mono text-[11px] font-bold tabular-nums">
+                          <span className={isTop3 ? "text-cyan" : "text-muted-foreground"}>
+                            {String(idx + 1).padStart(2, "0")}
+                          </span>
+                        </td>
+                        <td className="p-3">
+                          <Link to="/fund/$id" params={{ id: s.schemeCode }}
+                            className="text-[12px] font-semibold leading-tight text-foreground transition-colors hover:text-cyan">
+                            {s.schemeName}
+                          </Link>
+                          <div className="mt-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                            {s.amc} · #{s.schemeCode} · NAV ₹{s.nav.toFixed(2)}
                           </div>
-                        ) : (
-                          <span className="font-mono text-[10px] text-muted-foreground">—</span>
-                        )}
-                      </td>
-                      <td className={`p-3 text-right font-mono text-[11px] font-bold tabular-nums ${tone(s.ret1y)}`}>
-                        {fmtPct(s.ret1y, { signed: true })}
-                      </td>
-                      <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(s.cagr3y)}`}>
-                        {fmtPct(s.cagr3y, { signed: true })}
-                      </td>
-                      <td className="p-3 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
-                        {fmtNum(s.sharpe, 2)}
-                      </td>
-                      <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(s.maxDD)}`}>
-                        {fmtPct(s.maxDD, { signed: true })}
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="p-3 text-right">
+                          {s.score != null ? (
+                            <div className="inline-flex flex-col items-end gap-1">
+                              <span className="font-mono text-[12px] font-bold tabular-nums text-cyan">
+                                {fmtNum(s.score, 1)}
+                              </span>
+                              <div className="h-1 w-12 overflow-hidden rounded-full bg-border">
+                                <div className="h-full rounded-full bg-cyan transition-all duration-500"
+                                  style={{ width: `${Math.min(100, s.score)}%` }} />
+                              </div>
+                            </div>
+                          ) : navQueries[idx]?.isLoading ? (
+                            <Loader2 className="ml-auto h-3 w-3 animate-spin text-muted-foreground" />
+                          ) : (
+                            <span className="font-mono text-[10px] text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className={`p-3 text-right font-mono text-[11px] font-bold tabular-nums ${tone(s.ret1y)}`}>
+                          {fmtPct(s.ret1y, { signed: true })}
+                        </td>
+                        <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(s.cagr3y)}`}>
+                          {fmtPct(s.cagr3y, { signed: true })}
+                        </td>
+                        <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(s.sharpe)}`}>
+                          {fmtNum(s.sharpe, 2)}
+                        </td>
+                        <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(s.maxDD)}`}>
+                          {fmtPct(s.maxDD, { signed: true })}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           )}
         </div>
 
-        <div className="mt-4 border-t border-border pt-4">
-          <p className="text-[10px] leading-relaxed text-muted-foreground">
-            QuantFund Score is a transparent composite of CAGR (35%), Sharpe (25%), Max Drawdown (20%) and 1Y rolling
-            positive rate (20%) — all computed from real NAV history. Not AI, not a prediction. NAV from{" "}
-            <a href="https://www.amfiindia.com" target="_blank" rel="noopener noreferrer" className="text-cyan underline underline-offset-2">
-              AMFI India
-            </a>{" "}
-            and{" "}
-            <a href="https://www.mfapi.in" target="_blank" rel="noopener noreferrer" className="text-cyan underline underline-offset-2">
-              mfapi.in
-            </a>
-            . Live index ticker is being wired to a paid market-data provider; values are intentionally absent until the API key is configured rather than fabricated.
-          </p>
-        </div>
+        {/* Footer */}
+        <p className="text-[10px] leading-relaxed text-muted-foreground">
+          <span className="text-foreground">QuantFund Score</span> is a transparent composite of CAGR (35%), Sharpe (25%),
+          Max Drawdown (20%) and 1Y rolling positive rate (20%) — computed from real NAV history. Not AI, not a prediction.
+          NAV data from{" "}
+          <a href="https://www.amfiindia.com" target="_blank" rel="noopener noreferrer" className="text-cyan underline underline-offset-2">AMFI India</a>
+          {" "}and{" "}
+          <a href="https://www.mfapi.in" target="_blank" rel="noopener noreferrer" className="text-cyan underline underline-offset-2">mfapi.in</a>.
+          Market ticks (NIFTY 50, SENSEX, Gold, USD/INR) via Yahoo Finance — displayed in the ticker bar above.
+        </p>
       </div>
     </AppShell>
   );
@@ -296,28 +286,27 @@ function tone(v: number | null): string {
 }
 
 function KpiTile({
-  label,
-  value,
-  suffix,
-  tone,
+  icon: Icon, label, value, suffix, tone,
 }: {
+  icon: React.ElementType;
   label: string;
   value: string;
   suffix?: string;
   tone?: "positive" | "negative" | "cyan";
 }) {
-  const toneClass =
-    tone === "positive" ? "text-positive" : tone === "negative" ? "text-negative" : tone === "cyan" ? "text-cyan" : "text-foreground";
+  const toneClass = tone === "positive" ? "text-positive" : tone === "negative" ? "text-negative" : tone === "cyan" ? "text-cyan" : "text-foreground";
+  const iconClass = tone === "positive" ? "text-positive" : tone === "negative" ? "text-negative" : tone === "cyan" ? "text-cyan" : "text-muted-foreground";
   return (
-    <div className="rounded-sm border border-border bg-surface p-3">
-      <p className="mb-1 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">{label}</p>
-      <p className={`font-display text-lg font-bold tabular-nums ${toneClass}`}>
+    <div className="group rounded-xl border border-border bg-surface p-4 transition-colors hover:border-border/80 hover:bg-surface-elevated">
+      <div className="mb-3 flex items-center justify-between">
+        <p className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">{label}</p>
+        <Icon className={`h-3.5 w-3.5 ${iconClass} opacity-70`} />
+      </div>
+      <p className={`font-display text-xl font-bold tabular-nums ${toneClass}`}>
         {value}
-        {suffix ? (
-          <span className="ml-1 font-mono text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-            {suffix}
-          </span>
-        ) : null}
+        {suffix && (
+          <span className="ml-1.5 font-mono text-[9px] font-medium uppercase tracking-widest text-muted-foreground">{suffix}</span>
+        )}
       </p>
     </div>
   );
@@ -325,9 +314,9 @@ function KpiTile({
 
 function InfoTooltip({ text }: { text: string }) {
   return (
-    <span className="group relative" role="tooltip" aria-label={text}>
+    <span className="group/tip relative" role="tooltip" aria-label={text}>
       <Info className="h-3 w-3 cursor-help text-muted-foreground" aria-hidden="true" />
-      <span className="pointer-events-none absolute right-0 top-4 z-10 hidden w-56 rounded border border-border bg-surface p-2 text-[10px] normal-case tracking-normal text-foreground shadow-lg group-hover:block">
+      <span className="pointer-events-none absolute right-0 top-4 z-20 hidden w-60 rounded-lg border border-border bg-surface p-2.5 text-[10px] normal-case tracking-normal text-foreground shadow-xl group-hover/tip:block">
         {text}
       </span>
     </span>
