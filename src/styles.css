@@ -170,3 +170,12 @@ html { scroll-behavior: smooth; }
 
 :root { font-family: var(--font-sans); }
 
+
+/* Page transition — triggered by key={path} on <main> in AppShell */
+@keyframes qf-page-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.page-transition {
+  animation: qf-page-in 0.2s ease-out both;
+}
