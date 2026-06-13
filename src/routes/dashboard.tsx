@@ -94,8 +94,8 @@ interface ScoredOverall extends CachedMetrics {
   advScore: number | null;
 }
 
-/** "growth" = scheme name contains "Growth"; "other" = IDCW/Reinvestment/etc. */
-type PlanBadge = "growth" | "other";
+/** "direct" = Direct plan; "regular" = Regular plan. */
+type PlanBadge = "direct" | "regular";
 
 interface CatRow extends AMFIScheme {
   badge: PlanBadge;
@@ -110,7 +110,7 @@ interface CatRow extends AMFIScheme {
 
 /** Derive plan badge from scheme name. */
 function planBadge(name: string): PlanBadge {
-  return /growth/i.test(name) ? "growth" : "other";
+  return /direct/i.test(name) ? "direct" : "regular";
 }
 
 function tone(v: number | null): string {
@@ -252,16 +252,17 @@ function DashboardPage() {
   }, [overallCandidates, overallNavQ]);
 
   // ── Category pool ────────────────────────────────────────────────────────
-  // ALL Direct plans in the selected category — Growth AND IDCW/Other.
-  // Regular plans are excluded. Badge colours distinguish Growth (green) from Other (red).
+  // Direct-Growth and Regular-Growth plans only — excludes IDCW/Reinvestment
+  // variants to keep the NAV fetch count low and page load fast.
+  // Badge colours distinguish Direct (green) from Regular (amber).
 
   const catCandidates = useMemo((): AMFIScheme[] => {
     const inCat = activeSchemes.filter(
       (s) => classifyAMFICategory(s.category) === activeCategory,
     );
-    // Direct plans only — include all plan types (Growth + IDCW + Reinvestment)
-    const direct = inCat.filter((s) => /direct/i.test(s.schemeName));
-    return direct.length >= 3 ? direct : inCat;
+    // Keep only Growth plans (Direct or Regular) — drop IDCW, Reinvestment, etc.
+    const growthOnly = inCat.filter((s) => /growth/i.test(s.schemeName));
+    return growthOnly.length >= 3 ? growthOnly : inCat;
   }, [activeSchemes, activeCategory]);
 
   // Reset category metric cache when category changes
@@ -560,15 +561,19 @@ function DashboardPage() {
               <BarChart2 className="h-4 w-4 text-cyan" />
               <h2 className="font-display text-base font-bold tracking-tight">Category Top 10</h2>
               <span className="rounded-lg border border-border bg-surface px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
-                QF Score · All Plans
+                QF Score · Growth Plans Only
               </span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              All Growth plans (Direct + Regular) in the selected category, ranked by QuantFund Score.
-              <span className="ml-1 rounded bg-cyan/10 px-1 py-0.5 font-mono text-[8px] uppercase tracking-wider text-cyan">
+              Direct-Growth and Regular-Growth plans in the selected category, ranked by QuantFund Score.
+              <span className="ml-1 rounded bg-positive/15 px-1 py-0.5 font-mono text-[8px] uppercase tracking-wider text-positive">
                 Direct
               </span>
-              {" "}badge marks Direct plans (lower expense ratio).
+              {" "}= lower expense ratio.{" "}
+              <span className="rounded bg-amber-500/15 px-1 py-0.5 font-mono text-[8px] uppercase tracking-wider text-amber-400">
+                Regular
+              </span>
+              {" "}= distributor plan.
             </p>
           </div>
 
@@ -662,11 +667,11 @@ function DashboardPage() {
                                   {s.amc} · ₹{s.nav.toFixed(2)}
                                 </span>
                                 <span className={`rounded px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wider ${
-                                  s.badge === "growth"
+                                  s.badge === "direct"
                                     ? "bg-positive/15 text-positive"
-                                    : "bg-negative/15 text-negative"
+                                    : "bg-amber-500/15 text-amber-400"
                                 }`}>
-                                  {s.badge === "growth" ? "Growth" : "Other"}
+                                  {s.badge === "direct" ? "Direct" : "Regular"}
                                 </span>
                               </div>
                             </div>
