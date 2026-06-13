@@ -187,3 +187,78 @@ export function quantFundScore(m: FundMetrics): number | null {
 function clamp01(x: number): number {
   return Math.max(0, Math.min(1, x));
 }
+
+/**
+ * Calmar ratio = 3Y CAGR / |Max Drawdown|.
+ * Measures how much compounded return is earned per unit of worst-case loss.
+ * Higher = better. Typical range: 0.2 – 3.0.
+ */
+export function calmarRatio(m: FundMetrics): number | null {
+  if (m.cagr3y == null || m.maxDrawdown == null) return null;
+  if (m.maxDrawdown === 0) return m.cagr3y >= 0 ? 10 : null;
+  if (m.maxDrawdown >= 0) return null;
+  return m.cagr3y / Math.abs(m.maxDrawdown);
+}
+
+/**
+ * Percentile of value `v` within `arr` (0–100).
+ * `lowerIsBetter` reverses the direction (e.g. maxDrawdown).
+ */
+export function percentileOf(arr: number[], v: number, lowerIsBetter = false): number {
+  if (arr.length <= 1) return 50;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const below = sorted.filter((x) => x < v).length;
+  const equal = sorted.filter((x) => x === v).length;
+  const pct = ((below + equal * 0.5) / sorted.length) * 100;
+  return lowerIsBetter ? 100 - pct : pct;
+}
+
+export interface PoolFundData {
+  metrics: FundMetrics;
+  calmar: number | null;
+}
+
+/**
+ * Advanced cross-category score (0–100) using percentile normalization.
+ * Each of the 6 factors is percentile-ranked within the full pool before weighting,
+ * so the score is relative (not absolute) and valid for cross-category comparison.
+ *
+ * Weights:
+ *   Sharpe Ratio      28% — risk-adjusted return per unit volatility
+ *   Sortino Ratio     22% — return per unit of downside volatility
+ *   Calmar Ratio      20% — 3Y CAGR / |MaxDD| (return per unit worst-case loss)
+ *   3Y CAGR           15% — absolute compounded return
+ *   Rolling 1Y Pos%   10% — consistency across rolling 1Y windows
+ *   Max Drawdown       5% — magnitude of worst peak-to-trough loss (lower = better)
+ */
+export function advancedPoolScore(fund: PoolFundData, pool: PoolFundData[]): number | null {
+  const get = <K extends keyof PoolFundData>(
+    key: K,
+    sub?: keyof FundMetrics,
+  ): number[] => {
+    if (key === "calmar") return pool.map((f) => f.calmar).filter((v): v is number => v != null);
+    return pool.map((f) => (f.metrics as any)[sub!]).filter((v): v is number => v != null);
+  };
+
+  const criteria: { values: number[]; v: number | null; w: number; lowerBetter?: boolean }[] = [
+    { values: get("metrics", "sharpe"),            v: fund.metrics.sharpe,            w: 28 },
+    { values: get("metrics", "sortino"),           v: fund.metrics.sortino,           w: 22 },
+    { values: get("calmar"),                       v: fund.calmar,                    w: 20 },
+    { values: get("metrics", "cagr3y"),            v: fund.metrics.cagr3y,            w: 15 },
+    { values: get("metrics", "rollingPositive1y"), v: fund.metrics.rollingPositive1y, w: 10 },
+    { values: get("metrics", "maxDrawdown"),       v: fund.metrics.maxDrawdown,       w:  5, lowerBetter: true },
+  ];
+
+  let totalW = 0;
+  let score = 0;
+
+  for (const { values, v, w, lowerBetter } of criteria) {
+    if (v == null || values.length <= 1) continue;
+    const pct = percentileOf(values, v, lowerBetter);
+    score += pct * w;
+    totalW += w;
+  }
+
+  if (totalW < 28) return null; // Sharpe pillar is mandatory
+  return score / totalW;
+}
