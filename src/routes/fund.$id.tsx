@@ -239,7 +239,7 @@ function FundPage() {
   }, [history, peerCandidates, peerNavQ, id]);
 
   const sr = engineResult?.scoreResult ?? null;
-  const ratingInfo = sr ? getRating(sr.fundScore) : null;
+  const ratingInfo = sr ? getRating(sr.finalScore) : null;
   const sw = sr ? getStrengthsWeaknesses(sr.pillars) : null;
   const em = sr
     ? (() => {
@@ -323,8 +323,8 @@ function FundPage() {
               <div className="mt-5 grid gap-3 sm:grid-cols-4">
                 <StatCard label="Latest NAV" value={`₹${fmtNum(legacyMetrics.navEnd?.nav ?? null)}`} />
                 {sr ? (
-                  <StatCard label="QuantFund Score" value={String(sr.fundScore)} tone="cyan"
-                    sub={`${sr.rating} · ${sr.confidenceScore}/100 confidence`} />
+                  <StatCard label="QuantFund Score" value={String(sr.finalScore)} tone="cyan"
+                    sub={`${sr.rating} · ${sr.confidenceScore}/100 conf · ${sr.fundScore} raw`} />
                 ) : (
                   <StatCard label="QF Score" value="…" tone="cyan" sub="Loading peers…" />
                 )}
@@ -371,7 +371,7 @@ function FundPage() {
                       <div>
                         <div className="flex items-baseline gap-1">
                           <span className="font-display text-5xl font-black tabular-nums leading-none text-cyan">
-                            {sr.fundScore}
+                            {sr.finalScore}
                           </span>
                           <span className="font-mono text-sm text-muted-foreground">/100</span>
                         </div>
@@ -408,11 +408,11 @@ function FundPage() {
                     <div>
                       <div className="mb-1 flex items-center justify-between">
                         <span className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground">Overall</span>
-                        <span className="font-mono text-[10px] font-bold text-cyan">{sr.fundScore}/100</span>
+                        <span className="font-mono text-[10px] font-bold text-cyan">{sr.finalScore}/100</span>
                       </div>
                       <div className="h-2 overflow-hidden rounded-full bg-border">
                         <div className="h-full rounded-full bg-gradient-to-r from-cyan/70 to-cyan transition-all duration-700"
-                          style={{ width: `${sr.fundScore}%` }} />
+                          style={{ width: `${sr.finalScore}%` }} />
                       </div>
                     </div>
                   </div>

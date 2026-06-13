@@ -104,7 +104,7 @@ function ScoreCard({ row, rank, expanded, onToggle }: {
   row: Row; rank: number; expanded: boolean; onToggle: () => void;
 }) {
   const sr = row.scoreResult;
-  const ratingInfo = sr ? getRating(sr.fundScore) : null;
+  const ratingInfo = sr ? getRating(sr.finalScore) : null;
   const sw = sr ? getStrengthsWeaknesses(sr.pillars) : null;
   const em = row.engineMetrics;
 
@@ -166,7 +166,7 @@ function ScoreCard({ row, rank, expanded, onToggle }: {
           {sr && ratingInfo ? (
             <div className="flex shrink-0 flex-col items-end gap-1">
               <div className="flex items-baseline gap-1">
-                <span className="font-display text-3xl font-black tabular-nums leading-none text-cyan">{sr.fundScore}</span>
+                <span className="font-display text-3xl font-black tabular-nums leading-none text-cyan">{sr.finalScore}</span>
                 <span className="font-mono text-[8px] text-muted-foreground">/100</span>
               </div>
               <span className={`rounded border px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-widest ${ratingInfo.bg} ${ratingInfo.color}`}>
@@ -353,7 +353,7 @@ function Rankings() {
     }
 
     // Sort globally
-    allRows.sort((a, b) => (b.scoreResult?.fundScore ?? -1) - (a.scoreResult?.fundScore ?? -1));
+    allRows.sort((a, b) => (b.scoreResult?.finalScore ?? -1) - (a.scoreResult?.finalScore ?? -1));
     allRows.forEach((r, i) => { r.globalRank = i + 1; });
 
     // Category ranks (list is sorted by score → first occurrence per cat = rank 1)

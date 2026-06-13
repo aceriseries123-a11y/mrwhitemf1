@@ -1,21 +1,29 @@
 /**
- * scoring-engine.ts — Production Mutual Fund Scoring Engine v3
+ * scoring-engine.ts — Production Mutual Fund Scoring Engine v4
  *
- * All 7 pillars now active. Pillars 5–7 use NAV-derived proxy metrics because
- * AMFI/mfapi.in does not expose expense ratios, portfolio holdings, or manager data.
- * Each pillar notes its data source in the UI.
+ * Implements the full QuantFund spec:
+ *   • 7-pillar Fund Score (category-relative percentile scoring)
+ *   • Confidence Score with exact spec thresholds (Age 70% + Data Completeness 30%)
+ *   • Final Published Score = (FundScore × 0.90) + (ConfidenceScore × 0.10)
+ *   • Local Redistribution: missing metric weight stays within its pillar only
+ *   • Consistency Bonus = % of rolling 3Y windows where fund beats category benchmark
+ *   • Pillars 5–7 use NAV-derived proxy metrics (expense ratio / portfolio data unavailable)
  *
  *   Pillar                       Weight  Source
  *   ─────────────────────────────────────────────────────────────────────────────
- *   1. Long-Term Consistency         23%  NAV — 3Y/5Y/7Y/10Y CAGR + rolling positive rate
+ *   1. Long-Term Consistency         23%  NAV — 3Y/5Y/7Y/10Y CAGR + Consistency Bonus
  *   2. Short-Term Performance         5%  NAV — 1M/3M/6M returns
- *   3. Risk-Adjusted Performance     20%  NAV — Sortino + Sharpe + Information Ratio
- *   4. Downside Protection           20%  NAV — Downside/Upside Capture + MaxDD + Recovery + Beta + StdDev
- *   5. Cost Efficiency               15%  NAV-proxy — Long-run Alpha vs benchmark (lower cost → higher alpha)
- *   6. Portfolio Quality             12%  NAV-proxy — Calmar Ratio + Rolling Return Stability
- *   7. Management & AUM               5%  NAV-proxy — Fund Longevity + Rolling Consistency
+ *   3. Risk-Adjusted Performance     20%  NAV — Sortino(10) + Sharpe(6) + IR(4)
+ *   4. Downside Protection           20%  NAV — ↓Capture(8)+↑Capture(3)+MaxDD(4)+Recovery(3)+Beta(1)+StdDev(1)
+ *   5. Cost Efficiency               15%  NAV-proxy — Alpha vs benchmark
+ *   6. Portfolio Quality             12%  NAV-proxy — Calmar(7) + Rolling StdDev(5)
+ *   7. Management & AUM               5%  NAV-proxy — Longevity(2) + Rolling Consistency(3)
  *
- * All rankings are CATEGORY-SCOPED. Cross-category comparison is invalid.
+ * Final Published Score formula:
+ *   finalScore = round(fundScore × 0.90 + confidenceScore × 0.10)
+ *
+ * Phase 2 (requires additional data feeds): expense ratio, P/E, P/B, holdings,
+ *   sector HHI, active share, manager tenure, AUM, 3-month smoothing.
  */
 
 import type { NavPoint } from "./nav-history";
@@ -114,6 +122,41 @@ function rollingPositiveRate(series: NavPoint[], years: number): number | null {
   return total >= 8 ? pos / total : null;
 }
 
+/**
+ * Consistency Bonus (spec-compliant):
+ * % of rolling `years`-year windows where this fund's return beats the
+ * category benchmark (equal-weighted peer average). Falls back to simple
+ * rolling-positive-rate when no benchmark is available.
+ */
+function rollingAlphaRate(
+  series: NavPoint[],
+  benchmark: NavPoint[],
+  years: number,
+): number | null {
+  const windowMs = years * YEAR_MS;
+  const minMs = windowMs * 0.85;
+  const bmMap = new Map(benchmark.map(p => [p.d, p.nav]));
+  let beat = 0, total = 0;
+
+  for (let i = series.length - 1; i >= 0; i--) {
+    const startSeries = navAtOrBefore(series, series[i].t - windowMs);
+    if (!startSeries) break;
+    if (series[i].t - startSeries.t < minMs) continue;
+
+    const bmEnd   = bmMap.get(series[i].d);
+    const bmStart = bmMap.get(startSeries.d);
+    if (!bmEnd || !bmStart || bmStart === 0) continue;
+
+    const fundRet = series[i].nav / startSeries.nav - 1;
+    const bmRet   = bmEnd / bmStart - 1;
+
+    total++;
+    if (fundRet > bmRet) beat++;
+  }
+
+  return total >= 8 ? beat / total : null;
+}
+
 /** Std dev of rolling `years`-year returns — lower = more consistent NAV growth */
 function rollingReturnStdDev(series: NavPoint[], years: number): number | null {
   const windowMs = years * YEAR_MS;
@@ -175,18 +218,22 @@ interface BenchmarkMetrics {
   downsideCapture: number | null;
   upsideCapture: number | null;
   informationRatio: number | null;
-  longRunAlpha: number | null; // fund 3Y CAGR minus benchmark 3Y CAGR
+  longRunAlpha: number | null;
+  consistencyBeatRate: number | null;
 }
 
 export function computeBenchmarkMetrics(
   series: NavPoint[],
   benchmark: NavPoint[],
 ): BenchmarkMetrics {
-  // Long-run alpha — benchmark 3Y CAGR
+  // Long-run alpha
   const benchCAGR3Y = trailingCAGR(benchmark, 3);
   const fundCAGR3Y  = trailingCAGR(series, 3);
   const longRunAlpha =
     fundCAGR3Y != null && benchCAGR3Y != null ? fundCAGR3Y - benchCAGR3Y : null;
+
+  // Consistency Bonus — % of rolling 3Y windows beating benchmark
+  const consistencyBeatRate = rollingAlphaRate(series, benchmark, 3);
 
   const benchMap = new Map(benchmark.map(p => [p.d, p.nav]));
 
@@ -203,7 +250,7 @@ export function computeBenchmarkMetrics(
 
   if (pairs.length < 60) {
     return { beta: null, downsideCapture: null, upsideCapture: null,
-             informationRatio: null, longRunAlpha };
+             informationRatio: null, longRunAlpha, consistencyBeatRate };
   }
 
   // Beta
@@ -242,7 +289,8 @@ export function computeBenchmarkMetrics(
   const downsideCapture = dN >= 6 && dBS !== 0 ? (dFS / dBS) * 100 : null;
   const upsideCapture   = uN >= 6 && uBS !== 0 ? (uFS / uBS) * 100 : null;
 
-  return { beta, downsideCapture, upsideCapture, informationRatio, longRunAlpha };
+  return { beta, downsideCapture, upsideCapture, informationRatio,
+           longRunAlpha, consistencyBeatRate };
 }
 
 // ─── Public metric type ───────────────────────────────────────────────────────
@@ -253,19 +301,23 @@ export interface EngineMetrics {
   cagr5y: number | null;
   cagr7y: number | null;
   cagr10y: number | null;
-  rollingPos3y: number | null;    // fraction 0-1: rolling 3Y positive rate
+  /**
+   * Consistency Bonus — % of rolling 3Y windows where fund beat category benchmark.
+   * Falls back to % positive when no benchmark is available.
+   */
+  consistencyBeatRate: number | null;
 
   // Pillar 2 — Short-Term Performance
   ret1m: number | null;
   ret3m: number | null;
   ret6m: number | null;
 
-  // Pillar 3 — Risk-Adjusted
+  // Pillar 3 — Risk-Adjusted (Sortino 10, Sharpe 6, IR 4)
   sharpe: number | null;
   sortino: number | null;
   informationRatio: number | null;
 
-  // Pillar 4 — Downside Protection
+  // Pillar 4 — Downside Protection (↓Cap 8, ↑Cap 3, MaxDD 4, Recovery 3, Beta 1, StdDev 1)
   maxDrawdown: number | null;
   recoveryMonths: number | null;
   stdDev: number | null;
@@ -273,15 +325,15 @@ export interface EngineMetrics {
   downsideCapture: number | null;
   upsideCapture: number | null;
 
-  // Pillar 5 — Cost Efficiency (NAV proxy)
-  longRunAlpha: number | null;    // fund CAGR3Y − benchmark CAGR3Y
+  // Pillar 5 — Cost Efficiency proxy (Alpha vs benchmark)
+  longRunAlpha: number | null;
 
-  // Pillar 6 — Portfolio Quality (NAV proxy)
-  calmarRatio: number | null;     // cagr3y / |maxDrawdown|
-  rollingStdDev: number | null;   // std dev of rolling 1Y returns (lower = better)
+  // Pillar 6 — Portfolio Quality proxy (Calmar 7 + Rolling StdDev 5)
+  calmarRatio: number | null;
+  rollingStdDev: number | null;
 
-  // Pillar 7 — Management (NAV proxy)
-  rollingPos1y: number | null;    // fraction 0-1: rolling 1Y positive rate
+  // Pillar 7 — Management proxy (Longevity 2 + Rolling 1Y beat rate 3)
+  rollingPos1y: number | null;
   historyYears: number;
   dataPoints: number;
 }
@@ -303,22 +355,25 @@ export function computeEngineMetrics(
   const sharpe  = r3y != null && vol   != null && vol   > 0 ? (r3y - RISK_FREE_RATE_ANNUAL) / vol   : null;
   const sortino = r3y != null && ddVol != null && ddVol > 0 ? (r3y - RISK_FREE_RATE_ANNUAL) / ddVol : null;
 
-  const mxDD = maxDrawdown(series);
-  const cagr3y = trailingCAGR(series, 3);
+  const mxDD    = maxDrawdown(series);
+  const cagr3y  = trailingCAGR(series, 3);
   const calmarRatio = cagr3y != null && mxDD != null && mxDD < 0
     ? cagr3y / Math.abs(mxDD) : null;
 
   const bm = benchmark
     ? computeBenchmarkMetrics(series, benchmark)
     : { beta: null, downsideCapture: null, upsideCapture: null,
-        informationRatio: null, longRunAlpha: null };
+        informationRatio: null, longRunAlpha: null, consistencyBeatRate: null };
+
+  // Consistency Bonus fallback when no benchmark
+  const consistencyBeatRate = bm.consistencyBeatRate ?? rollingPositiveRate(series, 3);
 
   return {
     cagr3y,
     cagr5y:     trailingCAGR(series, 5),
     cagr7y:     trailingCAGR(series, 7),
     cagr10y:    trailingCAGR(series, 10),
-    rollingPos3y: rollingPositiveRate(series, 3),
+    consistencyBeatRate,
 
     ret1m: trailingCAGR(series, 1 / 12),
     ret3m: trailingCAGR(series, 3 / 12),
@@ -345,22 +400,33 @@ export function computeEngineMetrics(
   };
 }
 
-// ─── Confidence Score ─────────────────────────────────────────────────────────
+// ─── Confidence Score (spec-compliant) ───────────────────────────────────────
+//
+// Fund Age (70%):
+//   <3Y → 40,  3-5Y → 60,  5-7Y → 75,  7-10Y → 90,  10+Y → 100
+//
+// Data Completeness (30%):
+//   >95% → 100,  90-95% → 80,  80-90% → 60,  <80% → 40
 
 export function computeConfidenceScore(m: EngineMetrics): number {
+  // Fund Age Score (70%)
   const ageScore =
-    m.historyYears >= 10 ? 100 : m.historyYears >= 7 ? 90 :
-    m.historyYears >= 5  ? 75  : m.historyYears >= 3 ? 60 : 40;
+    m.historyYears >= 10 ? 100 :
+    m.historyYears >=  7 ?  90 :
+    m.historyYears >=  5 ?  75 :
+    m.historyYears >=  3 ?  60 : 40;
 
+  // Data Completeness Score (30%)
   const keys: (keyof EngineMetrics)[] = [
-    "cagr3y","sharpe","sortino","maxDrawdown","stdDev",
-    "rollingPos3y","informationRatio","downsideCapture","longRunAlpha","calmarRatio",
+    "cagr3y", "sharpe", "sortino", "maxDrawdown", "stdDev",
+    "consistencyBeatRate", "informationRatio", "downsideCapture",
+    "longRunAlpha", "calmarRatio",
   ];
   const avail = keys.filter(k => m[k] != null).length;
-  const comp  = avail / keys.length;
-  const compScore = comp > 0.9 ? 100 : comp > 0.75 ? 80 : comp > 0.6 ? 60 : 40;
+  const pct   = avail / keys.length;
+  const compScore = pct > 0.95 ? 100 : pct > 0.90 ? 80 : pct > 0.80 ? 60 : 40;
 
-  return Math.round(ageScore * 0.7 + compScore * 0.3);
+  return Math.round(ageScore * 0.70 + compScore * 0.30);
 }
 
 // ─── Rating bands ─────────────────────────────────────────────────────────────
@@ -375,7 +441,7 @@ export function getRating(score: number): { rating: string; color: string; bg: s
   return              { rating: "Avoid",             color: "text-negative", bg: "bg-negative/10 border-negative/30" };
 }
 
-// ─── Score types ──────────────────────────────────────────────────────────────
+// ─── Score result types ───────────────────────────────────────────────────────
 
 export interface PillarScore {
   rawScore: number;
@@ -388,18 +454,25 @@ export interface PillarScore {
 }
 
 export interface EngineScoreResult {
+  /** Pure fund quality score (0–100), category-relative percentile. */
   fundScore: number;
+  /**
+   * Final Published Score = (fundScore × 0.90) + (confidenceScore × 0.10).
+   * This is the primary number shown to users.
+   * Prevents short-history funds from unfairly topping rankings.
+   */
+  finalScore: number;
   confidenceScore: number;
   rating: string;
   ratingColor: string;
   pillars: {
-    longTermConsistency: PillarScore;
+    longTermConsistency:  PillarScore;
     shortTermPerformance: PillarScore;
-    riskAdjusted: PillarScore;
-    downsideProtection: PillarScore;
-    costEfficiency: PillarScore;
-    portfolioQuality: PillarScore;
-    managementAUM: PillarScore;
+    riskAdjusted:         PillarScore;
+    downsideProtection:   PillarScore;
+    costEfficiency:       PillarScore;
+    portfolioQuality:     PillarScore;
+    managementAUM:        PillarScore;
   };
 }
 
@@ -413,12 +486,14 @@ export function scoreWithPeers(
     peers.map(p => p[key] as number | null).filter((v): v is number => v != null);
 
   // ── Pillar 1: Long-Term Consistency (23%) ─────────────────────────────────
+  // Local redistribution: missing 5Y/7Y/10Y weights stay within this pillar.
+  // consistencyBeatRate = % rolling 3Y windows beating category benchmark.
   const ltc = scorePillar([
-    { v: m.cagr3y,       w: 5, peers: pv("cagr3y") },
-    { v: m.cagr5y,       w: 6, peers: pv("cagr5y") },
-    { v: m.cagr7y,       w: 5, peers: pv("cagr7y") },
-    { v: m.cagr10y,      w: 4, peers: pv("cagr10y") },
-    { v: m.rollingPos3y, w: 3, peers: pv("rollingPos3y") },
+    { v: m.cagr3y,              w: 5,  peers: pv("cagr3y") },
+    { v: m.cagr5y,              w: 6,  peers: pv("cagr5y") },
+    { v: m.cagr7y,              w: 5,  peers: pv("cagr7y") },
+    { v: m.cagr10y,             w: 4,  peers: pv("cagr10y") },
+    { v: m.consistencyBeatRate, w: 3,  peers: pv("consistencyBeatRate") },
   ], 23, false);
 
   // ── Pillar 2: Short-Term Performance (5%) ─────────────────────────────────
@@ -429,6 +504,7 @@ export function scoreWithPeers(
   ], 5, false);
 
   // ── Pillar 3: Risk-Adjusted (20%) ─────────────────────────────────────────
+  // Sortino(10) > Sharpe(6) > IR(4) per spec
   const ra = scorePillar([
     { v: m.sortino,          w: 10, peers: pv("sortino") },
     { v: m.sharpe,           w: 6,  peers: pv("sharpe") },
@@ -436,53 +512,64 @@ export function scoreWithPeers(
   ], 20, false);
 
   // ── Pillar 4: Downside Protection (20%) ───────────────────────────────────
+  // ↓Cap(8) + ↑Cap(3) + MaxDD(4) + Recovery(3) + Beta(1) + StdDev(1)
   const dp = scorePillar([
-    { v: m.downsideCapture,  w: 8, peers: pv("downsideCapture"),  lower: true },
+    { v: m.downsideCapture,  w: 8, peers: pv("downsideCapture"),  lower: true  },
     { v: m.upsideCapture,    w: 3, peers: pv("upsideCapture"),    lower: false },
-    { v: m.maxDrawdown,      w: 4, peers: pv("maxDrawdown"),      lower: true },
-    { v: m.recoveryMonths,   w: 3, peers: pv("recoveryMonths"),   lower: true },
-    { v: m.beta,             w: 1, peers: pv("beta"),             lower: true },
-    { v: m.stdDev,           w: 1, peers: pv("stdDev"),           lower: true },
+    { v: m.maxDrawdown,      w: 4, peers: pv("maxDrawdown"),      lower: true  },
+    { v: m.recoveryMonths,   w: 3, peers: pv("recoveryMonths"),   lower: true  },
+    { v: m.beta,             w: 1, peers: pv("beta"),             lower: true  },
+    { v: m.stdDev,           w: 1, peers: pv("stdDev"),           lower: true  },
   ], 20, false);
 
-  // ── Pillar 5: Cost Efficiency (15%) — NAV-proxy ───────────────────────────
-  // Alpha vs category benchmark: funds delivering above-benchmark returns
-  // do so partly because of lower costs leaving more return for investors.
+  // ── Pillar 5: Cost Efficiency (15%) — NAV proxy ────────────────────────────
+  // Alpha vs category benchmark: outperformance partly driven by lower costs.
+  // Phase 2: replace with actual expense ratio vs category average.
   const ce = scorePillar([
     { v: m.longRunAlpha, w: 15, peers: pv("longRunAlpha") },
   ], 15, true);
 
-  // ── Pillar 6: Portfolio Quality (12%) — NAV-proxy ─────────────────────────
-  // Calmar ratio rewards high return per unit of drawdown (quality holdings).
-  // Low rolling std dev rewards smooth, consistent NAV growth.
+  // ── Pillar 6: Portfolio Quality (12%) — NAV proxy ─────────────────────────
+  // Calmar(7) + Rolling Return StdDev(5, lower=better).
+  // Phase 2: P/E, P/B, Top-10 holdings %, sector HHI, active share, turnover.
   const pq = scorePillar([
     { v: m.calmarRatio,  w: 7, peers: pv("calmarRatio") },
     { v: m.rollingStdDev,w: 5, peers: pv("rollingStdDev"), lower: true },
   ], 12, true);
 
-  // ── Pillar 7: Management & AUM (5%) — NAV-proxy ───────────────────────────
-  // Longer history = more established, stable fund management.
-  // Higher rolling 1Y positive rate = manager consistently beats downturns.
+  // ── Pillar 7: Management & AUM (5%) — NAV proxy ───────────────────────────
+  // Longevity(2) + rolling 1Y beat rate(3).
+  // Phase 2: manager tenure, manager stability, AUM trend, AUM suitability.
   const ma = scorePillar([
     { v: m.historyYears,  w: 2, peers: pv("historyYears") },
     { v: m.rollingPos1y,  w: 3, peers: pv("rollingPos1y") },
   ], 5, true);
 
-  // ── Final score ───────────────────────────────────────────────────────────
+  // ── Fund Score — weighted sum of available pillar scores ──────────────────
   const ps = [ltc, stp, ra, dp, ce, pq, ma];
   const totalEffW = ps.reduce((s, p) => s + p.effectiveWeight, 0);
-  let fundScore = 0;
-  if (totalEffW > 0) {
-    fundScore = Math.max(0, Math.min(100, Math.round(
-      ps.reduce((s, p) => s + p.rawScore * p.effectiveWeight, 0) / totalEffW,
-    )));
-  }
+  const fundScore = totalEffW > 0
+    ? Math.max(0, Math.min(100, Math.round(
+        ps.reduce((s, p) => s + p.rawScore * p.effectiveWeight, 0) / totalEffW,
+      )))
+    : 0;
 
-  const conf = computeConfidenceScore(m);
-  const { rating, color: ratingColor } = getRating(fundScore);
+  // ── Confidence Score & Final Published Score ──────────────────────────────
+  // Confidence: Age(70%) + DataCompleteness(30%) — exact spec thresholds.
+  // Final = fundScore × 0.90 + confidenceScore × 0.10
+  const conf       = computeConfidenceScore(m);
+  const finalScore = Math.max(0, Math.min(100,
+    Math.round(fundScore * 0.90 + conf * 0.10),
+  ));
+
+  const { rating, color: ratingColor } = getRating(finalScore);
 
   return {
-    fundScore, confidenceScore: conf, rating, ratingColor,
+    fundScore,
+    finalScore,
+    confidenceScore: conf,
+    rating,
+    ratingColor,
     pillars: {
       longTermConsistency:  ltc,
       shortTermPerformance: stp,
@@ -495,11 +582,21 @@ export function scoreWithPeers(
   };
 }
 
-// ─── Pillar scorer ────────────────────────────────────────────────────────────
+// ─── Pillar scorer — local redistribution ────────────────────────────────────
+//
+// Local redistribution rule (spec-compliant):
+//   rawScore = weightedSum / availableWeight
+//   This normalises by available weight ONLY, so missing metric weight is
+//   redistributed within the pillar — never pushed to other pillars.
+//   effectiveWeight = nominalWeight whenever ≥1 metric is available.
 
 interface MetricInput { v: number | null; w: number; peers: number[]; lower?: boolean; }
 
-function scorePillar(metrics: MetricInput[], nominalWeight: number, isProxy: boolean): PillarScore {
+function scorePillar(
+  metrics: MetricInput[],
+  nominalWeight: number,
+  isProxy: boolean,
+): PillarScore {
   let availW = 0, scoreSum = 0, used = 0;
   for (const { v, w, peers, lower } of metrics) {
     if (v == null || peers.length <= 1) continue;
@@ -508,13 +605,15 @@ function scorePillar(metrics: MetricInput[], nominalWeight: number, isProxy: boo
     used++;
   }
   if (availW === 0) {
-    return { rawScore: 0, nominalWeight, effectiveWeight: 0,
-             available: false, metricsUsed: 0, metricsTotal: metrics.length, isProxy };
+    return {
+      rawScore: 0, nominalWeight, effectiveWeight: 0,
+      available: false, metricsUsed: 0, metricsTotal: metrics.length, isProxy,
+    };
   }
   return {
-    rawScore: scoreSum / availW,
+    rawScore: scoreSum / availW,       // local redistribution within pillar
     nominalWeight,
-    effectiveWeight: nominalWeight,
+    effectiveWeight: nominalWeight,    // full pillar weight preserved
     available: true,
     metricsUsed: used,
     metricsTotal: metrics.length,
