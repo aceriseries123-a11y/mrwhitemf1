@@ -10,6 +10,7 @@ import { classifyAMFICategory, QUANTFUND_CATEGORIES, type QuantFundCategory } fr
 import { fetchNavHistory } from "@/lib/nav-history";
 import type { NavPoint, NavHistory } from "@/lib/nav-history";
 import { loadEngineCache, saveEngineCache } from "@/lib/engine-cache";
+import { getSeries } from "@/lib/fund-store";
 import { fmtPct, fmtNum } from "@/lib/format";
 import { AppShell } from "@/components/AppShell";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
@@ -286,9 +287,23 @@ function Rankings() {
       queryFn:  () => fetchNavHistory(s.schemeCode),
       staleTime: 12 * 60 * 60 * 1000,
       retry: 1,
-      // Read from React Query cache (populated by dashboard) — instant if warm
-      initialData: () =>
-        queryClient.getQueryData<NavHistory>(["nav-history", s.schemeCode]),
+      // Read from React Query cache OR fund-store (both populated by Dashboard).
+      // If Dashboard ran first in this tab, every query starts as "success"
+      // immediately — zero network requests, zero loading time.
+      initialData: () => {
+        const cached = queryClient.getQueryData<NavHistory>(["nav-history", s.schemeCode]);
+        if (cached) return cached;
+        const series = getSeries(s.schemeCode);
+        if (series) return {
+          schemeCode: s.schemeCode,
+          schemeName: s.schemeName,
+          fundHouse: s.amc,
+          schemeType: s.schemeType,
+          schemeCategory: s.category,
+          series,
+        } satisfies NavHistory;
+        return undefined;
+      },
       initialDataUpdatedAt: () =>
         queryClient.getQueryState(["nav-history", s.schemeCode])?.dataUpdatedAt,
     })),
