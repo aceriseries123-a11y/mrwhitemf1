@@ -8,6 +8,7 @@ import { useAMFISchemes, filterActiveSchemes } from "@/lib/live-data";
 import { classifyAMFICategory } from "@/lib/categories";
 import { useNavHistory, fetchNavHistory } from "@/lib/nav-history";
 import type { NavHistory } from "@/lib/nav-history";
+import { getSeries } from "@/lib/fund-store";
 import type { NavPoint } from "@/lib/nav-history";
 import { computeFundMetrics } from "@/lib/fund-metrics";
 import { fmtPct, fmtNum, fmtAmfiDate } from "@/lib/format";
@@ -204,8 +205,22 @@ function FundPage() {
       queryFn: () => fetchNavHistory(s.schemeCode),
       staleTime: 12 * 60 * 60 * 1000,
       retry: 1,
-      initialData: () =>
-        queryClient.getQueryData<NavHistory>(["nav-history", s.schemeCode]),
+        // Read from React Query cache OR fund-store (populated by Dashboard) —
+      // peers that Dashboard already loaded start as "success" instantly.
+      initialData: () => {
+        const cached = queryClient.getQueryData<NavHistory>(["nav-history", s.schemeCode]);
+        if (cached) return cached;
+        const series = getSeries(s.schemeCode);
+        if (series) return {
+          schemeCode: s.schemeCode,
+          schemeName: s.schemeName,
+          fundHouse: s.amc,
+          schemeType: s.schemeType,
+          schemeCategory: s.category,
+          series,
+        } satisfies NavHistory;
+        return undefined;
+      },
       initialDataUpdatedAt: () =>
         queryClient.getQueryState(["nav-history", s.schemeCode])?.dataUpdatedAt,
     })),
