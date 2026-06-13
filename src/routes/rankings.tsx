@@ -8,12 +8,12 @@
  */
 
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Trophy, Search, X } from "lucide-react";
 import { fmtPct, fmtNum } from "@/lib/format";
 import { AppShell } from "@/components/AppShell";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
-import { getFullRankedList, type RankedFund } from "@/lib/fund-store";
+import { getFullRankedList, subscribeToRankedList, type RankedFund } from "@/lib/fund-store";
 import { QUANTFUND_CATEGORIES, type QuantFundCategory } from "@/lib/categories";
 
 export const Route = createFileRoute("/rankings")({
@@ -55,8 +55,11 @@ function Rankings() {
   const [sortKey, setSortKey] = useState<SortKey>("advScore");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
-  // Read directly from fund-store — populated by Dashboard, instant on mount
-  const allRanked = getFullRankedList();
+  // Reactive store read — re-renders whenever Dashboard calls setFullRankedList.
+  // Initial value from store (may already be populated if Dashboard ran earlier).
+  const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
+  useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
+
   const hasData = allRanked.length > 0;
 
   // Precompute global rank map so the table render is O(1) per row
