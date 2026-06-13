@@ -7,13 +7,14 @@ import {
 import { useAMFISchemes, filterActiveSchemes } from "@/lib/live-data";
 import { classifyAMFICategory } from "@/lib/categories";
 import { useNavHistory, fetchNavHistory } from "@/lib/nav-history";
+import type { NavHistory } from "@/lib/nav-history";
 import type { NavPoint } from "@/lib/nav-history";
 import { computeFundMetrics } from "@/lib/fund-metrics";
 import { fmtPct, fmtNum, fmtAmfiDate } from "@/lib/format";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
 import { Chart, axisStyle } from "@/components/Chart";
 import { useMemo } from "react";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import {
   computeEngineMetrics,
   buildBenchmark,
@@ -192,12 +193,21 @@ function FundPage() {
     );
   }, [allSchemes, category]);
 
+  const queryClient = useQueryClient();
+
+  // Peer NAV queries — use React Query in-memory cache (populated by dashboard
+  // or rankings) as initialData so peers that are already loaded start in
+  // "success" state immediately with no network request.
   const peerNavQ = useQueries({
     queries: peerCandidates.map((s) => ({
       queryKey: ["nav-history", s.schemeCode],
       queryFn: () => fetchNavHistory(s.schemeCode),
       staleTime: 12 * 60 * 60 * 1000,
       retry: 1,
+      initialData: () =>
+        queryClient.getQueryData<NavHistory>(["nav-history", s.schemeCode]),
+      initialDataUpdatedAt: () =>
+        queryClient.getQueryState(["nav-history", s.schemeCode])?.dataUpdatedAt,
     })),
   });
 

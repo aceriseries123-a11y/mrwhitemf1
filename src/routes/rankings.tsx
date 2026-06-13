@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useRef, useState } from "react";
-import { useQueries } from "@tanstack/react-query";
+import { useMemo, useRef, useState, useEffect } from "react";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle, Loader2, Trophy, CheckCircle2,
   ChevronDown, ChevronUp, ShieldCheck, Zap, Search, X, Info,
@@ -8,7 +8,8 @@ import {
 import { useAMFISchemes, filterActiveSchemes, type AMFIScheme } from "@/lib/live-data";
 import { classifyAMFICategory, QUANTFUND_CATEGORIES, type QuantFundCategory } from "@/lib/categories";
 import { fetchNavHistory } from "@/lib/nav-history";
-import type { NavPoint } from "@/lib/nav-history";
+import type { NavPoint, NavHistory } from "@/lib/nav-history";
+import { loadEngineCache, saveEngineCache } from "@/lib/engine-cache";
 import { fmtPct, fmtNum } from "@/lib/format";
 import { AppShell } from "@/components/AppShell";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
@@ -249,9 +250,18 @@ function Rankings() {
   const { data: allSchemes, isLoading: schemesLoading, isError, error } = useAMFISchemes();
   const [expandedCode, setExpandedCode] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const queryClient = useQueryClient();
 
-  // Metric cache — avoids recomputing on every render as new NAV data arrives
+  // Metric cache — primed from engine-cache localStorage on first render.
+  // Any fund whose EngineMetrics were computed in a previous session (dashboard
+  // or rankings) is available instantly — no NAV fetch needed for its scoring.
   const metricCache = useRef<Map<string, EngineMetrics>>(new Map());
+  const cacheLoaded = useRef(false);
+  if (!cacheLoaded.current) {
+    const stored = loadEngineCache();
+    for (const [k, v] of stored) metricCache.current.set(k, v);
+    cacheLoaded.current = true;
+  }
 
   // All active direct-growth schemes — same pool as dashboard
   const allCandidates = useMemo((): (AMFIScheme & { poolCategory: QuantFundCategory })[] => {
@@ -266,15 +276,21 @@ function Rankings() {
     });
   }, [allSchemes]);
 
-  // Individual browser fetches — SAME queryKey as dashboard so React Query cache
-  // is shared. If the user visited the dashboard first, most/all will be instant.
-  // This avoids the server-side batch endpoint which gets rate-limited by mfapi.in.
+  // Individual browser fetches — SAME queryKey as dashboard so the React Query
+  // in-memory cache is shared. initialData seeds each query from whatever is
+  // already in cache (from the dashboard this session), so those queries start
+  // in "success" state immediately — zero loading time for warm data.
   const navQueries = useQueries({
     queries: allCandidates.map(s => ({
       queryKey: ["nav-history", s.schemeCode],
       queryFn:  () => fetchNavHistory(s.schemeCode),
       staleTime: 12 * 60 * 60 * 1000,
       retry: 1,
+      // Read from React Query cache (populated by dashboard) — instant if warm
+      initialData: () =>
+        queryClient.getQueryData<NavHistory>(["nav-history", s.schemeCode]),
+      initialDataUpdatedAt: () =>
+        queryClient.getQueryState(["nav-history", s.schemeCode])?.dataUpdatedAt,
     })),
   });
 
@@ -290,6 +306,13 @@ function Rankings() {
   const navTotal  = allCandidates.length;
   const isDone    = navSettled === navTotal && navTotal > 0;
   const pct       = navTotal > 0 ? Math.round((navSettled / navTotal) * 100) : 0;
+
+  // Persist newly-computed EngineMetrics to engine-cache once fully loaded,
+  // so every other page (fund detail, next rankings visit) gets them instantly.
+  useEffect(() => {
+    if (!isDone) return;
+    saveEngineCache(metricCache.current);
+  }, [isDone]);
 
   // Build series map from loaded queries
   const seriesMap = useMemo(() => {
