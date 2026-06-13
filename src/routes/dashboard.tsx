@@ -189,7 +189,6 @@ function DashboardPage() {
 
   // Per-fund metric cache — avoids recomputing on every render as pool grows.
   const overallMetricCache = useRef<Map<string, CachedMetrics>>(new Map());
-  const catMetricCache     = useRef<Map<string, CachedMetrics>>(new Map());
 
   // Load today's metrics from localStorage and prime the in-memory cache once.
   // Funds primed from localStorage skip NAV fetching entirely on reload.
@@ -312,65 +311,33 @@ function DashboardPage() {
     return scored.slice(0, TOP_N);
   }, [overallCandidates, freshNavMap]);
 
-  // ── Category pool ────────────────────────────────────────────────────────
-  // Strict Direct-Growth plans only in the selected category. No fallback.
+  // ── Category pool — reads directly from Table 1's cache ─────────────────
+  // NO separate useQueries. Table 1 already fetched and computed metrics for
+  // every direct-growth fund in every category. Table 2 just filters
+  // overallCandidates by the active category and reads from overallMetricCache.
+  // Switching categories is INSTANT — zero new network requests.
 
-  const catCandidates = useMemo((): AMFIScheme[] => {
-    const inCat = activeSchemes.filter(
-      (s) => classifyAMFICategory(s.category) === activeCategory,
-    );
-    // Strict Direct-Growth only — no IDCW, no Regular, no fallback
-    return inCat.filter(
-      (s) => /direct/i.test(s.schemeName) && /growth/i.test(s.schemeName),
-    );
-  }, [activeSchemes, activeCategory]);
-
-  // Reset category metric cache when category changes
-  const prevCat = useRef<QuantFundCategory | null>(null);
-  if (prevCat.current !== activeCategory) {
-    catMetricCache.current.clear();
-    prevCat.current = activeCategory;
-  }
-
-  // ── Category pool — individual browser fetches ───────────────────────────
-  // Typically 30-60 funds per category → fast with direct browser fetches.
-
-  const catNavQ = useQueries({
-    queries: catCandidates.map((s) => ({
-      queryKey: ["nav-history", s.schemeCode],
-      queryFn: () => fetchNavHistory(s.schemeCode),
-      staleTime: 12 * 60 * 60 * 1000,
-      retry: 1,
-    })),
-  });
-
-  const catSettled = useMemo(
-    () => catNavQ.filter((q) => q.status === "success" || q.status === "error").length,
-    [catNavQ],
+  const catCandidates = useMemo(
+    () => overallCandidates.filter((s) => s.poolCategory === activeCategory),
+    [overallCandidates, activeCategory],
   );
-  const catLoaded = useMemo(
-    () => catNavQ.filter((q) => q.status === "success").length,
-    [catNavQ],
-  );
-  const catFailed = catSettled - catLoaded;
+
   const catTotal  = catCandidates.length;
-  const catDone   = catSettled === catTotal && catTotal > 0;
+  // Re-evaluate whenever freshNavMap updates (proxy for "Table 1 loaded more data")
+  const catLoaded = useMemo(
+    () => catCandidates.filter((s) => overallMetricCache.current.has(s.schemeCode)).length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [catCandidates, freshNavMap],
+  );
+  const catDone = overallDone || (catLoaded === catTotal && catTotal > 0);
 
   const catRanked = useMemo((): CatRow[] => {
-    const rows: CatRow[] = catCandidates.map((s, i) => {
-      const badge   = planBadge(s.schemeName);
-      const history = catNavQ[i]?.data;
-      if (!history) {
+    const rows: CatRow[] = catCandidates.map((s) => {
+      const badge  = planBadge(s.schemeName);
+      const cached = overallMetricCache.current.get(s.schemeCode);
+      if (!cached) {
         return { ...s, badge, score: null, ret1y: null, cagr3y: null, sharpe: null, maxDD: null };
       }
-
-      let cached = catMetricCache.current.get(s.schemeCode);
-      if (!cached) {
-        const metrics = computeFundMetrics(history.series);
-        cached = { metrics, calmar: calmarRatio(metrics) };
-        catMetricCache.current.set(s.schemeCode, cached);
-      }
-
       const m = cached.metrics;
       return {
         ...s,
@@ -382,11 +349,12 @@ function DashboardPage() {
         maxDD:  m.maxDrawdown,
       };
     });
-    // Only show funds that have loaded data — skip null-score rows entirely
     const loaded = rows.filter((r) => r.score !== null);
     loaded.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
     return loaded.slice(0, TOP_N);
-  }, [catCandidates, catNavQ]);
+  // freshNavMap causes re-run as Table 1 populates overallMetricCache
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catCandidates, freshNavMap]);
 
   // ── KPI strip ────────────────────────────────────────────────────────────
   const topAdvScore  = overallRanked[0]?.advScore ?? null;
@@ -662,11 +630,10 @@ function DashboardPage() {
           </div>
 
           <ProgressBar
-            settled={catSettled}
+            settled={catLoaded}
             loaded={catLoaded}
             total={catTotal}
-            noData={catFailed}
-            label={`${activeCategory} · ${catTotal} Direct-Growth plans`}
+            label={`${activeCategory} · ${catTotal} plans · from overall pool`}
           />
 
           <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
@@ -773,7 +740,7 @@ function DashboardPage() {
 
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-background/40 px-4 py-2.5">
               <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-                {catLoaded}/{catTotal} scored{catDone && <span className="text-positive"> · final ranking</span>}
+                {catLoaded}/{catTotal} scored{catDone && <span className="text-positive"> · from overall pool</span>}
               </span>
               <Link to="/rankings"
                 className="font-mono text-[9px] uppercase tracking-wider text-cyan transition-colors hover:text-cyan/80">
