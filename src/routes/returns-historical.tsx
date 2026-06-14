@@ -1,8 +1,13 @@
 /**
  * returns-historical.tsx — All Trailing Return Periods
  *
- * Columns: Sno · Fund · Category · Return Score · 1W · 1M · 3M · 6M · 1Y · 3Y · 5Y · 7Y · 10Y
- * All periods sortable · Category-coloured badges · Short-Term / Long-Term sub-score breakdown
+ * Columns: Sno · Fund · Category · Return Score · ST Score · LT Score ·
+ *          1D · 1W · 1M · 3M · 6M (Short-Term)
+ *          Rolling 1Y Avg · Rolling 3Y Avg · Rolling 5Y Avg · Rolling 7Y Avg (Long-Term)
+ *
+ * ST Score = 1D(20%) + 1W(20%) + 1M(20%) + 3M(20%) + 6M(20%)
+ * LT Score = Rolling 1Y(25%) + Rolling 3Y(25%) + Rolling 5Y(25%) + Rolling 7Y(25%)
+ * Return Score = ST × 30% + LT × 70%
  */
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState, useEffect } from "react";
@@ -18,7 +23,7 @@ export const Route = createFileRoute("/returns-historical")({
   head: () => ({
     meta: [
       { title: "Returns — QuantFund" },
-      { name: "description", content: "Historical trailing returns for all mutual funds across 9 periods." },
+      { name: "description", content: "Historical trailing returns and rolling return averages for all mutual funds." },
     ],
   }),
   component: ReturnsHistorical,
@@ -29,7 +34,8 @@ const ALL_CATS: Array<"All" | QuantFundCategory> = [
 ];
 
 type SortKey = "schemeName" | "poolCategory" | "returnScore" | "stScore" | "ltScore"
-  | "ret1w" | "ret1m" | "ret3m" | "ret6m" | "ret1y" | "ret3y" | "ret5y" | "ret7y" | "ret10y";
+  | "ret1d" | "ret1w" | "ret1m" | "ret3m" | "ret6m"
+  | "roll1y" | "roll3y" | "roll5y" | "roll7y";
 type SortDir = "asc" | "desc";
 
 function CategoryBadge({ cat }: { cat: string }) {
@@ -42,7 +48,7 @@ function CategoryBadge({ cat }: { cat: string }) {
   );
 }
 
-function RetCell({ v, isCAGR = false }: { v: number | null; isCAGR?: boolean }) {
+function RetCell({ v }: { v: number | null }) {
   if (v == null) return <span className="font-mono text-[10px] text-muted-foreground">—</span>;
   const color = v > 0.12 ? "text-positive font-bold" : v > 0 ? "text-positive" : "text-negative";
   return <span className={`font-mono text-[11px] tabular-nums ${color}`}>{fmtPct(v, { signed: true })}</span>;
@@ -110,15 +116,15 @@ function ReturnsHistorical() {
         if (sortKey === "returnScore") return f.returnScore;
         if (sortKey === "stScore")  return f.shortTermScore;
         if (sortKey === "ltScore")  return f.longTermScore;
+        if (sortKey === "ret1d")    return f.metrics.ret1d;
         if (sortKey === "ret1w")    return f.metrics.ret1w;
         if (sortKey === "ret1m")    return f.metrics.ret1m;
         if (sortKey === "ret3m")    return f.metrics.ret3m;
         if (sortKey === "ret6m")    return f.metrics.ret6m;
-        if (sortKey === "ret1y")    return f.metrics.ret1y;
-        if (sortKey === "ret3y")    return f.metrics.cagr3y;
-        if (sortKey === "ret5y")    return f.metrics.cagr5y;
-        if (sortKey === "ret7y")    return f.metrics.cagr7y;
-        if (sortKey === "ret10y")   return f.metrics.cagr10y;
+        if (sortKey === "roll1y")   return f.metrics.rollingReturn1yAvg;
+        if (sortKey === "roll3y")   return f.metrics.rollingReturn3yAvg;
+        if (sortKey === "roll5y")   return f.metrics.rollingReturn5yAvg;
+        if (sortKey === "roll7y")   return f.metrics.rollingReturn7yAvg;
         return null;
       };
       const va = getV(a), vb = getV(b);
@@ -146,7 +152,7 @@ function ReturnsHistorical() {
             <div className="flex items-center gap-2.5"><BarChart3 className="h-5 w-5 text-cyan" />
               <h1 className="font-display text-2xl font-bold tracking-tight">Historical Returns</h1></div>
             <p className="mt-1 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
-              {allRanked.length.toLocaleString()} funds · trailing periods 1W → 10Y · all CAGR ≥ 1Y
+              {allRanked.length.toLocaleString()} funds · trailing ST (1D→6M) + rolling LT averages (1Y→7Y)
             </p>
           </div>
           <DataSourceBadge />
@@ -156,9 +162,9 @@ function ReturnsHistorical() {
         <div className="rounded-xl border border-border bg-surface/60 px-4 py-3">
           <div className="flex flex-wrap gap-x-6 gap-y-1 font-mono text-[9px] text-muted-foreground">
             <span><span className="text-cyan font-bold">Return Score</span> = Short-Term(30%) + Long-Term(70%), each percentile-ranked within peer group</span>
-            <span><span className="text-foreground">ST Score</span> = 1W(25%) + 1M(25%) + 3M(25%) + 6M(25%)</span>
-            <span><span className="text-foreground">LT Score</span> = 1Y(15%) + 3Y(25%) + 5Y(30%) + 7Y(30%)</span>
-            <span>Periods ≥ 1Y are CAGR · Periods &lt; 1Y are simple returns · Values shown as annualised %</span>
+            <span><span className="text-foreground">ST Score</span> = 1D(20%) + 1W(20%) + 1M(20%) + 3M(20%) + 6M(20%)</span>
+            <span><span className="text-foreground">LT Score</span> = Rolling 1Y(25%) + Rolling 3Y(25%) + Rolling 5Y(25%) + Rolling 7Y(25%)</span>
+            <span>Rolling Avg = arithmetic mean of ALL rolling N-year point-to-point returns · "expected return from any random N-year hold"</span>
           </div>
         </div>
 
@@ -179,26 +185,26 @@ function ReturnsHistorical() {
 
         <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1500px] text-left">
+            <table className="w-full min-w-[1600px] text-left">
               <thead className="sticky top-0 z-10">
                 <tr className="border-b border-border bg-background/95 font-mono text-[9px] uppercase tracking-widest text-muted-foreground backdrop-blur">
                   <th className="w-10 p-3 text-center font-medium">#</th>
                   <th className="p-3 font-medium">Fund</th>
                   <th className="p-3 font-medium">Category</th>
                   <SortTh label="Return Score" k="returnScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} accent title="ST×30%+LT×70% (percentile within peer group)" />
-                  <SortTh label="ST Score" k="stScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Short-Term: 1W+1M+3M+6M percentile average" />
-                  <SortTh label="LT Score" k="ltScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Long-Term: 1Y+3Y+5Y+7Y percentile average" />
+                  <SortTh label="ST Score" k="stScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Short-Term: 1D+1W+1M+3M+6M equal-weighted percentile" />
+                  <SortTh label="LT Score" k="ltScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Long-Term: Rolling 1Y/3Y/5Y/7Y avg percentile" />
                   {/* Short-term periods */}
+                  <SortTh label="1D" k="ret1d" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="1 day simple return" />
                   <SortTh label="1W" k="ret1w" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="1 week simple return" />
                   <SortTh label="1M" k="ret1m" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="1 month simple return" />
                   <SortTh label="3M" k="ret3m" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="3 month simple return" />
                   <SortTh label="6M" k="ret6m" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="6 month simple return" />
-                  {/* Long-term CAGR */}
-                  <SortTh label="1Y CAGR" k="ret1y" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="1 year CAGR" />
-                  <SortTh label="3Y CAGR" k="ret3y" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="3 year CAGR" />
-                  <SortTh label="5Y CAGR" k="ret5y" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="5 year CAGR" />
-                  <SortTh label="7Y CAGR" k="ret7y" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="7 year CAGR" />
-                  <SortTh label="10Y CAGR" k="ret10y" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="10 year CAGR" />
+                  {/* Long-term rolling averages */}
+                  <SortTh label="Roll 1Y Avg" k="roll1y" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Mean of all rolling 1-year point-to-point returns" />
+                  <SortTh label="Roll 3Y Avg" k="roll3y" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Mean of all rolling 3-year point-to-point returns" />
+                  <SortTh label="Roll 5Y Avg" k="roll5y" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Mean of all rolling 5-year point-to-point returns" />
+                  <SortTh label="Roll 7Y Avg" k="roll7y" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Mean of all rolling 7-year point-to-point returns" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
@@ -225,15 +231,15 @@ function ReturnsHistorical() {
                       </td>
                       <td className="p-3 text-right"><ScoreChip v={f.shortTermScore} /></td>
                       <td className="p-3 text-right"><ScoreChip v={f.longTermScore} /></td>
+                      <td className="p-3 text-right"><RetCell v={m.ret1d} /></td>
                       <td className="p-3 text-right"><RetCell v={m.ret1w} /></td>
                       <td className="p-3 text-right"><RetCell v={m.ret1m} /></td>
                       <td className="p-3 text-right"><RetCell v={m.ret3m} /></td>
                       <td className="p-3 text-right"><RetCell v={m.ret6m} /></td>
-                      <td className="p-3 text-right"><RetCell v={m.ret1y} isCAGR /></td>
-                      <td className="p-3 text-right"><RetCell v={m.cagr3y} isCAGR /></td>
-                      <td className="p-3 text-right"><RetCell v={m.cagr5y} isCAGR /></td>
-                      <td className="p-3 text-right"><RetCell v={m.cagr7y} isCAGR /></td>
-                      <td className="p-3 text-right"><RetCell v={m.cagr10y} isCAGR /></td>
+                      <td className="p-3 text-right"><RetCell v={m.rollingReturn1yAvg} /></td>
+                      <td className="p-3 text-right"><RetCell v={m.rollingReturn3yAvg} /></td>
+                      <td className="p-3 text-right"><RetCell v={m.rollingReturn5yAvg} /></td>
+                      <td className="p-3 text-right"><RetCell v={m.rollingReturn7yAvg} /></td>
                     </tr>
                   );
                 })}
@@ -242,10 +248,14 @@ function ReturnsHistorical() {
           </div>
           <div className="border-t border-border bg-background/40 px-4 py-2.5">
             <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-              {displayed.length.toLocaleString()} funds · Scroll right for all 9 periods
+              {displayed.length.toLocaleString()} funds · Scroll right for all periods
             </span>
           </div>
         </div>
+        <p className="text-[10px] leading-relaxed text-muted-foreground">
+          <span className="text-foreground font-semibold">Rolling Avg</span> = arithmetic mean of ALL rolling N-year point-to-point returns (every trading day as endpoint).
+          Positive = investor who held any random N-year period earned on average this much. Requires ≥ 8 valid windows.
+        </p>
       </div>
     </AppShell>
   );

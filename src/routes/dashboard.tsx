@@ -26,12 +26,18 @@ const POOL_CATS = QUANTFUND_CATEGORIES.filter(c => c !== "Unknown") as QuantFund
 const ALL_CATS: Array<"All" | QuantFundCategory> = ["All", ...POOL_CATS];
 
 type PoolEntry = { schemeCode: string; schemeName: string; amc: string; nav: number; date: string; category: string; poolCategory: QuantFundCategory };
-type SortKey = "rank" | "schemeName" | "poolCategory" | "finalScore" | "nav" | "annualReturnAvg" | "rollingReturn1yAvg";
+type SortKey = "rank" | "schemeName" | "poolCategory" | "finalScore" | "nav" | "aum" | "annualReturnAvg" | "rollingReturn1yAvg";
 type SortDir = "asc" | "desc";
 
 function tone(v: number | null) {
   if (v == null) return "text-muted-foreground";
   return v >= 0 ? "text-positive" : "text-negative";
+}
+
+function fmtAUM(cr: number): string {
+  if (cr >= 10000) return `₹${(cr / 1000).toFixed(1)}K Cr`;
+  if (cr >= 1000)  return `₹${(cr / 1000).toFixed(2)}K Cr`;
+  return `₹${fmtNum(cr, 0)} Cr`;
 }
 
 function CategoryBadge({ cat }: { cat: string }) {
@@ -193,6 +199,32 @@ function DashboardPage() {
   const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
   useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
 
+  // AUM fetch — batch all ranked funds in groups of 60 after scoring done
+  const [aumMap, setAumMap] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    if (allRanked.length === 0) return;
+    const codes = allRanked.map(f => f.schemeCode);
+    const BATCH = 60;
+    let cancelled = false;
+    const fetchAll = async () => {
+      const newMap = new Map<string, number>();
+      for (let i = 0; i < codes.length; i += BATCH) {
+        if (cancelled) break;
+        const batch = codes.slice(i, i + BATCH);
+        try {
+          const res = await fetch(`/api/public/scheme-aum?codes=${batch.join(",")}`);
+          if (res.ok) {
+            const data = await res.json() as Record<string, number>;
+            for (const [k, v] of Object.entries(data)) newMap.set(k, v);
+          }
+        } catch { /* best-effort */ }
+      }
+      if (!cancelled) setAumMap(new Map(newMap));
+    };
+    fetchAll();
+    return () => { cancelled = true; };
+  }, [allRanked.length]);
+
   const toggleSort = (k: SortKey) => {
     if (sortKey === k) setSortDir(d => d === "desc" ? "asc" : "desc");
     else { setSortKey(k); setSortDir("desc"); }
@@ -207,11 +239,12 @@ function DashboardPage() {
       if (sortKey === "schemeName") return dir * a.schemeName.localeCompare(b.schemeName);
       if (sortKey === "poolCategory") return dir * (a.poolCategory as string).localeCompare(b.poolCategory as string);
       if (sortKey === "nav") return dir * ((a.nav ?? 0) - (b.nav ?? 0));
+      if (sortKey === "aum") return dir * ((aumMap.get(a.schemeCode) ?? -1) - (aumMap.get(b.schemeCode) ?? -1));
       if (sortKey === "annualReturnAvg") return dir * ((a.metrics.annualReturnAvg ?? -999) - (b.metrics.annualReturnAvg ?? -999));
       if (sortKey === "rollingReturn1yAvg") return dir * ((a.metrics.rollingReturn1yAvg ?? -999) - (b.metrics.rollingReturn1yAvg ?? -999));
       return dir * ((a.finalScore ?? -1) - (b.finalScore ?? -1));
     });
-  }, [allRanked, catFilter, search, sortKey, sortDir]);
+  }, [allRanked, catFilter, search, sortKey, sortDir, aumMap]);
 
   const asOf = allSchemes?.[0]?.date ?? null;
 
@@ -233,6 +266,8 @@ function DashboardPage() {
       </div>
     </AppShell>
   );
+
+  const aumLoaded = aumMap.size > 0;
 
   return (
     <AppShell title="Dashboard">
@@ -272,6 +307,7 @@ function DashboardPage() {
             <span className="font-bold text-cyan">Engine Score</span> — 7-pillar, category-relative:
             LT Consistency <span className="text-foreground">23%</span> · Risk-Adjusted <span className="text-foreground">20%</span> · Downside Prot. <span className="text-foreground">20%</span> · Cost Efficiency <span className="text-foreground">15%</span> · Portfolio Quality <span className="text-foreground">12%</span> · Short-Term <span className="text-foreground">5%</span> · Management <span className="text-foreground">5%</span>
             &nbsp;·&nbsp;<span className="font-bold text-cyan">Avg Cal-Yr Ret</span> = mean of each calendar year's return · <span className="font-bold text-cyan">Rolling 1Y Avg</span> = mean of every rolling 1Y return window
+            &nbsp;·&nbsp;<span className="font-bold text-cyan">Fund Size</span> = AUM in ₹ Cr via Kuvera (loaded after scoring)
           </p>
         </div>
 
@@ -281,7 +317,7 @@ function DashboardPage() {
         ) : (
           <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] text-left">
+              <table className="w-full min-w-[1000px] text-left">
                 <thead className="sticky top-0 z-10">
                   <tr className="border-b border-border bg-background/95 font-mono text-[9px] uppercase tracking-widest text-muted-foreground backdrop-blur">
                     <th className="w-10 p-3 text-center font-medium">Sno</th>
@@ -289,7 +325,7 @@ function DashboardPage() {
                     <SortTh label="Category" k="poolCategory" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} right={false} />
                     <SortTh label="Score" k="finalScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                     <SortTh label="NAV ₹" k="nav" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                    <th className="p-3 text-right font-medium whitespace-nowrap text-muted-foreground">Fund Size</th>
+                    <SortTh label="Fund Size" k="aum" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="AUM via Kuvera — loaded after scoring completes" />
                     <SortTh label="Avg Cal-Yr Ret" k="annualReturnAvg" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                     <SortTh label="Rolling 1Y Avg" k="rollingReturn1yAvg" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                   </tr>
@@ -301,6 +337,7 @@ function DashboardPage() {
                     </td></tr>
                   ) : displayed.map((f, idx) => {
                     const m = f.metrics;
+                    const aum = aumMap.get(f.schemeCode);
                     return (
                       <tr key={f.schemeCode} className="transition-colors hover:bg-cyan/[0.04]">
                         <td className="p-3 text-center font-mono text-[11px] font-bold tabular-nums text-muted-foreground">{String(idx + 1).padStart(2, "0")}</td>
@@ -321,14 +358,15 @@ function DashboardPage() {
                         </td>
                         <td className="p-3 text-right font-mono text-[11px] tabular-nums text-foreground">₹{f.nav.toFixed(2)}</td>
                         <td className="p-3 text-right">
-                          <span className="font-mono text-[10px] text-muted-foreground" title="AUM not available in public AMFI feed">—</span>
+                          {aum != null
+                            ? <span className="font-mono text-[11px] tabular-nums text-foreground">{fmtAUM(aum)}</span>
+                            : <span className="font-mono text-[10px] text-muted-foreground" title={aumLoaded ? "AUM not available for this fund" : "Loading AUM…"}>
+                                {aumLoaded ? "—" : <Loader2 className="inline h-3 w-3 animate-spin" />}
+                              </span>}
                         </td>
                         <td className="p-3 text-right" title={
                             m.calendarYearReturns?.length
-                              ? m.calendarYearReturns.map((r, i) => {
-                                  const startYear = new Date(series ? series[0]?.t ?? 0 : 0).getUTCFullYear();
-                                  return `${(r * 100 >= 0 ? "+" : "") + (r * 100).toFixed(1)}%`;
-                                }).join(" · ")
+                              ? m.calendarYearReturns.map(r => `${(r * 100 >= 0 ? "+" : "") + (r * 100).toFixed(1)}%`).join(" · ")
                               : "Insufficient history for calendar-year calculation"
                           }>
                           <div className="inline-flex flex-col items-end gap-0.5">
@@ -361,8 +399,8 @@ function DashboardPage() {
 
         <p className="text-[10px] leading-relaxed text-muted-foreground">
           <span className="text-foreground font-semibold">Avg Cal-Yr Ret</span> = arithmetic mean of each calendar year's Jan→Dec simple return. Hover cell to see per-year values.
-          <span className="text-foreground font-semibold ml-2">Rolling 1Y Avg</span> = mean of ALL rolling 1-year point-to-point returns (every trading day as endpoint). Positive = investor who held any random 1-year period earned on average this much.
-          Fund Size (AUM) not in public AMFI/mfapi.in feed — shown as "—".
+          <span className="text-foreground font-semibold ml-2">Rolling 1Y Avg</span> = mean of ALL rolling 1-year point-to-point returns (every trading day as endpoint).
+          <span className="text-foreground font-semibold ml-2">Fund Size</span> = AUM via Kuvera API (ISIN lookup), loaded after scoring completes.
         </p>
       </div>
     </AppShell>

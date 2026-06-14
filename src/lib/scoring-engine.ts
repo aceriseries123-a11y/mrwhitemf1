@@ -14,7 +14,7 @@
  *   Pillar                       Weight  Phase 2 Metrics
  *   ────────────────────────────────────────────────────────────────────────────
  *   1. Long-Term Consistency         23%  3Y/5Y/7Y/10Y CAGR + Consistency Bonus
- *   2. Short-Term Performance         5%  1M/3M/6M returns
+ *   2. Short-Term Performance         5%  1D/1M/3M/6M returns
  *   3. Risk-Adjusted                 20%  Sortino(10) + Sharpe(6) + IR(4)
  *   4. Downside Protection           20%  ↓Cap(8)+↑Cap(3)+MaxDD(4)+Recovery(3)+Beta(1)+StdDev(1)
  *   5. Cost Efficiency               15%  Jensen's Alpha(9) + Tracking Error(6, lower)
@@ -173,7 +173,7 @@ function rollingReturnStdDev(series: NavPoint[], years: number): number | null {
 }
 /**
  * Rolling Return Average — arithmetic mean of all rolling `years`-year point-to-point returns.
- * Answers: "If someone invested for exactly 1 year on any random day, what was their average return?"
+ * Answers: "If someone invested for exactly N years on any random day, what was their average return?"
  * Returns a fraction (e.g. 0.12 = 12%). Requires ≥ 8 valid windows.
  */
 function rollingReturnAvg(series: NavPoint[], years: number): number | null {
@@ -250,29 +250,26 @@ interface BenchmarkMetrics {
   downsideCapture: number | null;
   upsideCapture: number | null;
   informationRatio: number | null;
-  trackingError: number | null;     // Phase 2
+  trackingError: number | null;
   longRunAlpha: number | null;
-  jensensAlpha: number | null;      // Phase 2
+  jensensAlpha: number | null;
   consistencyBeatRate: number | null;
-  bearMarketReturn: number | null;  // Phase 2
+  bearMarketReturn: number | null;
 }
 
 export function computeBenchmarkMetrics(
   series: NavPoint[],
   benchmark: NavPoint[],
 ): BenchmarkMetrics {
-  // Long-run alpha (raw CAGR diff)
   const benchCAGR3Y = trailingCAGR(benchmark, 3);
   const fundCAGR3Y  = trailingCAGR(series, 3);
   const longRunAlpha =
     fundCAGR3Y != null && benchCAGR3Y != null ? fundCAGR3Y - benchCAGR3Y : null;
 
-  // Consistency Bonus — % of rolling 3Y windows beating benchmark
   const consistencyBeatRate = rollingAlphaRate(series, benchmark, 3);
 
   const benchMap = new Map(benchmark.map(p => [p.d, p.nav]));
 
-  // Aligned daily log returns
   const pairs: { f: number; b: number }[] = [];
   for (let i = 1; i < series.length; i++) {
     const bCurr = benchMap.get(series[i].d);
@@ -289,14 +286,12 @@ export function computeBenchmarkMetrics(
              jensensAlpha: null, consistencyBeatRate, bearMarketReturn: null };
   }
 
-  // Beta
   const fM = pairs.reduce((s, p) => s + p.f, 0) / pairs.length;
   const bM = pairs.reduce((s, p) => s + p.b, 0) / pairs.length;
   let cov = 0, varB = 0;
   for (const { f, b } of pairs) { cov += (f - fM) * (b - bM); varB += (b - bM) ** 2; }
   const beta = varB > 0 ? cov / varB : null;
 
-  // Tracking Error + Information Ratio (same computation pass)
   const excess = pairs.map(p => p.f - p.b);
   const exM = excess.reduce((a, e) => a + e, 0) / excess.length;
   const exV = excess.reduce((s, e) => s + (e - exM) ** 2, 0) / (excess.length - 1);
@@ -304,14 +299,11 @@ export function computeBenchmarkMetrics(
   const trackingError    = te > 0 ? te : null;
   const informationRatio = te > 0 ? (exM * TRADING_DAYS_PER_YEAR) / te : null;
 
-  // Jensen's Alpha = annFundReturn − (RFR + β × (annBenchReturn − RFR))
-  // Uses 3Y CAGR as the annualised return proxy
   const jensensAlpha =
     fundCAGR3Y != null && benchCAGR3Y != null && beta != null
       ? fundCAGR3Y - (RISK_FREE_RATE_ANNUAL + beta * (benchCAGR3Y - RISK_FREE_RATE_ANNUAL))
       : null;
 
-  // Monthly aggregates for capture ratios + bear market return
   const monthly = new Map<string, { f: number; b: number }>();
   for (let i = 1; i < series.length; i++) {
     const bCurr = benchMap.get(series[i].d);
@@ -333,9 +325,7 @@ export function computeBenchmarkMetrics(
   const downsideCapture = dN >= 6 && dBS !== 0 ? (dFS / dBS) * 100 : null;
   const upsideCapture   = uN >= 6 && uBS !== 0 ? (uFS / uBS) * 100 : null;
 
-  // Bear Market Return — fund's average annualised return during down benchmark months.
-  // Higher (less negative) = fund preserves more capital in bear markets = better manager.
-  const bearMarketReturn = dN >= 6 ? (dFS / dN) * 12 : null; // monthly avg × 12 = annualised
+  const bearMarketReturn = dN >= 6 ? (dFS / dN) * 12 : null;
 
   return { beta, downsideCapture, upsideCapture, informationRatio,
            trackingError, longRunAlpha, jensensAlpha, consistencyBeatRate, bearMarketReturn };
@@ -349,10 +339,10 @@ export interface EngineMetrics {
   cagr5y:              number | null;
   cagr7y:              number | null;
   cagr10y:             number | null;
-  /** % rolling 3Y windows where fund beat category benchmark (or % positive if no benchmark). */
   consistencyBeatRate: number | null;
 
   // Pillar 2 — Short-Term Performance
+  ret1d: number | null;
   ret1w: number | null;
   ret1m: number | null;
   ret3m: number | null;
@@ -376,29 +366,27 @@ export interface EngineMetrics {
   upsideCapture:   number | null;
 
   // Pillar 5 — Cost Efficiency (Phase 2: Jensen's Alpha 9 + Tracking Error 6)
-  /** Beta-adjusted outperformance vs benchmark — proxy for low expense ratio impact. */
   jensensAlpha:  number | null;
-  /** StdDev of excess daily returns, annualised — lower = less wasted active risk. */
   trackingError: number | null;
-  /** Raw CAGR diff (legacy, still stored for display). */
   longRunAlpha:  number | null;
 
   // Pillar 6 — Portfolio Quality (Phase 2: Calmar 4 + Omega 5 + Rolling StdDev 3)
   calmarRatio:  number | null;
-  /** Probability-weighted return quality above RFR — higher = better portfolio construction. */
   omegaRatio:   number | null;
   rollingStdDev: number | null;
 
   // Pillar 7 — Management & AUM (Phase 2: Longevity 1 + Rolling 1Y+ 2 + Bear Mkt Return 2)
-  rollingPos1y:     number | null;
-  /** Arithmetic mean of all rolling 1Y point-to-point returns — "expected return from any random 1Y hold". */
+  rollingPos1y:       number | null;
+  /** Arithmetic mean of all rolling 1Y point-to-point returns. */
   rollingReturn1yAvg: number | null;
-  /** Calendar-year simple returns as fractions, chronological. E.g. [0.124, -0.101, 0.283]. */
+  /** Arithmetic mean of all rolling 3Y point-to-point returns. */
+  rollingReturn3yAvg: number | null;
+  /** Arithmetic mean of all rolling 5Y point-to-point returns. */
+  rollingReturn5yAvg: number | null;
+  /** Arithmetic mean of all rolling 7Y point-to-point returns. */
+  rollingReturn7yAvg: number | null;
+  /** Calendar-year simple returns as fractions, chronological. */
   calendarYearReturns: number[];
-  /**
-   * Annualised fund return during benchmark down-months.
-   * Higher (less negative) = fund preserves capital in bear markets = better management.
-   */
   bearMarketReturn: number | null;
 
   historyYears: number;
@@ -406,9 +394,6 @@ export interface EngineMetrics {
 }
 
 // ─── Annual Return Average helper ────────────────────────────────────────────
-// Calendar-year returns: computes Jan→Dec return for each available calendar year,
-// then returns the simple arithmetic average of all years.
-// Also exports min/max year return for display in tooltips.
 
 export function computeCalendarYearReturns(series: NavPoint[]): number[] {
   if (series.length < 2) return [];
@@ -419,13 +404,11 @@ export function computeCalendarYearReturns(series: NavPoint[]): number[] {
   const yearReturns: number[] = [];
   for (let yr = firstYear; yr < lastYear; yr++) {
     const yearEndMs = Date.UTC(yr, 11, 31, 23, 59, 59, 999);
-    // First point in this calendar year
     let startPoint: NavPoint | null = null;
     for (const p of series) {
       if (new Date(p.t).getUTCFullYear() === yr) { startPoint = p; break; }
     }
     if (!startPoint) continue;
-    // Last point in this calendar year
     const endPoint = navAtOrBefore(series, yearEndMs);
     if (!endPoint) continue;
     if (new Date(endPoint.t).getUTCFullYear() !== yr) continue;
@@ -472,7 +455,6 @@ export function computeEngineMetrics(
         jensensAlpha: null, consistencyBeatRate: null, bearMarketReturn: null,
       };
 
-  // Consistency Bonus fallback when no benchmark
   const consistencyBeatRate = bm.consistencyBeatRate ?? rollingPositiveRate(series, 3);
 
   return {
@@ -482,6 +464,7 @@ export function computeEngineMetrics(
     cagr10y: trailingCAGR(series, 10),
     consistencyBeatRate,
 
+    ret1d: trailingCAGR(series, 1 / 365),
     ret1w: trailingCAGR(series, 1 / 52),
     ret1m: trailingCAGR(series, 1 / 12),
     ret3m: trailingCAGR(series, 3 / 12),
@@ -508,8 +491,11 @@ export function computeEngineMetrics(
     omegaRatio:   omegaRatio(lRets),
     rollingStdDev: rollingReturnStdDev(series, 1),
 
-    rollingPos1y:     rollingPositiveRate(series, 1),
+    rollingPos1y:       rollingPositiveRate(series, 1),
     rollingReturn1yAvg: rollingReturnAvg(series, 1),
+    rollingReturn3yAvg: rollingReturnAvg(series, 3),
+    rollingReturn5yAvg: rollingReturnAvg(series, 5),
+    rollingReturn7yAvg: rollingReturnAvg(series, 7),
     calendarYearReturns: computeCalendarYearReturns(series),
     bearMarketReturn: bm.bearMarketReturn,
 
@@ -519,9 +505,6 @@ export function computeEngineMetrics(
 }
 
 // ─── Confidence Score (spec-compliant) ───────────────────────────────────────
-//
-// Fund Age (70%): <3Y→40, 3-5Y→60, 5-7Y→75, 7-10Y→90, 10+Y→100
-// Data Completeness (30%): >95%→100, 90-95%→80, 80-90%→60, <80%→40
 
 export function computeConfidenceScore(m: EngineMetrics): number {
   const ageScore =
@@ -551,197 +534,131 @@ export function getRating(score: number): { rating: string; color: string; bg: s
   if (score >= 75) return { rating: "Above Average", color: "text-positive", bg: "bg-positive/10 border-positive/30" };
   if (score >= 65) return { rating: "Average",       color: "text-warning",  bg: "bg-warning/10 border-warning/30" };
   if (score >= 50) return { rating: "Weak",          color: "text-warning",  bg: "bg-warning/10 border-warning/30" };
-  return              { rating: "Avoid",             color: "text-negative", bg: "bg-negative/10 border-negative/30" };
+  return            { rating: "Avoid",          color: "text-negative", bg: "bg-negative/10 border-negative/30" };
 }
 
-// ─── Score result types ───────────────────────────────────────────────────────
+// ─── Score one fund with peer context ─────────────────────────────────────────
 
-export interface PillarScore {
-  rawScore:       number;
-  nominalWeight:  number;
-  effectiveWeight:number;
-  available:      boolean;
-  metricsUsed:    number;
-  metricsTotal:   number;
-  isProxy:        boolean;
+export interface PillarResult {
+  rawScore: number;
+  weight:   number;
+  label:    string;
 }
 
 export interface EngineScoreResult {
-  /** Pure fund quality score (0–100), category-relative percentile. */
-  fundScore: number;
-  /**
-   * Final Published Score = round(fundScore × 0.90 + confidenceScore × 0.10).
-   * Primary number shown to users. Penalises short-history funds.
-   */
-  finalScore:      number;
+  fundScore:       number;
   confidenceScore: number;
+  finalScore:      number;
   rating:          string;
   ratingColor:     string;
   pillars: {
-    longTermConsistency:  PillarScore;
-    shortTermPerformance: PillarScore;
-    riskAdjusted:         PillarScore;
-    downsideProtection:   PillarScore;
-    costEfficiency:       PillarScore;
-    portfolioQuality:     PillarScore;
-    managementAUM:        PillarScore;
+    longTermConsistency:  PillarResult;
+    shortTermPerformance: PillarResult;
+    riskAdjusted:         PillarResult;
+    downsideProtection:   PillarResult;
+    costEfficiency:       PillarResult;
+    portfolioQuality:     PillarResult;
+    managementAUM:        PillarResult;
   };
 }
-
-// ─── Pillar scorer — local redistribution ────────────────────────────────────
-//
-// rawScore = weightedSum / availableWeight  →  missing weight stays within pillar
-// effectiveWeight = nominalWeight when ≥1 metric is available
-
-interface MetricInput { v: number | null; w: number; peers: number[]; lower?: boolean; }
-
-function scorePillar(
-  metrics: MetricInput[],
-  nominalWeight: number,
-  isProxy: boolean,
-): PillarScore {
-  let availW = 0, scoreSum = 0, used = 0;
-  for (const { v, w, peers, lower } of metrics) {
-    if (v == null || peers.length <= 1) continue;
-    scoreSum += percentileOf(peers, v, lower) * w;
-    availW += w;
-    used++;
-  }
-  if (availW === 0) {
-    return { rawScore: 0, nominalWeight, effectiveWeight: 0,
-             available: false, metricsUsed: 0, metricsTotal: metrics.length, isProxy };
-  }
-  return {
-    rawScore: scoreSum / availW,
-    nominalWeight,
-    effectiveWeight: nominalWeight,
-    available:       true,
-    metricsUsed:     used,
-    metricsTotal:    metrics.length,
-    isProxy,
-  };
-}
-
-// ─── Score with peer context ──────────────────────────────────────────────────
 
 export function scoreWithPeers(
   m: EngineMetrics,
   peers: EngineMetrics[],
 ): EngineScoreResult {
-  const pv = <K extends keyof EngineMetrics>(key: K): number[] =>
-    peers.map(p => p[key] as number | null).filter((v): v is number => v != null);
-
-  // ── Pillar 1: Long-Term Consistency (23%) ─────────────────────────────────
-  const ltc = scorePillar([
-    { v: m.cagr3y,              w: 5, peers: pv("cagr3y") },
-    { v: m.cagr5y,              w: 6, peers: pv("cagr5y") },
-    { v: m.cagr7y,              w: 5, peers: pv("cagr7y") },
-    { v: m.cagr10y,             w: 4, peers: pv("cagr10y") },
-    { v: m.consistencyBeatRate, w: 3, peers: pv("consistencyBeatRate") },
-  ], 23, false);
-
-  // ── Pillar 2: Short-Term Performance (5%) ─────────────────────────────────
-  const stp = scorePillar([
-    { v: m.ret1m, w: 1, peers: pv("ret1m") },
-    { v: m.ret3m, w: 2, peers: pv("ret3m") },
-    { v: m.ret6m, w: 2, peers: pv("ret6m") },
-  ], 5, false);
-
-  // ── Pillar 3: Risk-Adjusted (20%) ─────────────────────────────────────────
-  const ra = scorePillar([
-    { v: m.sortino,          w: 10, peers: pv("sortino") },
-    { v: m.sharpe,           w:  6, peers: pv("sharpe") },
-    { v: m.informationRatio, w:  4, peers: pv("informationRatio") },
-  ], 20, false);
-
-  // ── Pillar 4: Downside Protection (20%) ───────────────────────────────────
-  const dp = scorePillar([
-    { v: m.downsideCapture, w: 8, peers: pv("downsideCapture"), lower: true  },
-    { v: m.upsideCapture,   w: 3, peers: pv("upsideCapture"),   lower: false },
-    { v: m.maxDrawdown,     w: 4, peers: pv("maxDrawdown"),     lower: true  },
-    { v: m.recoveryMonths,  w: 3, peers: pv("recoveryMonths"),  lower: true  },
-    { v: m.beta,            w: 1, peers: pv("beta"),            lower: true  },
-    { v: m.stdDev,          w: 1, peers: pv("stdDev"),          lower: true  },
-  ], 20, false);
-
-  // ── Pillar 5: Cost Efficiency (15%) — Phase 2 ─────────────────────────────
-  // Jensen's Alpha (9): beta-adjusted outperformance; better proxy for low
-  //   expense ratio impact than raw CAGR diff.
-  // Tracking Error (6, lower): less wasted active risk = more cost-efficient.
-  const ce = scorePillar([
-    { v: m.jensensAlpha,  w: 9, peers: pv("jensensAlpha") },
-    { v: m.trackingError, w: 6, peers: pv("trackingError"), lower: true },
-  ], 15, true);
-
-  // ── Pillar 6: Portfolio Quality (12%) — Phase 2 ───────────────────────────
-  // Omega Ratio (5): probability-weighted return quality.
-  // Calmar Ratio (4): return per unit of max drawdown.
-  // Rolling Return StdDev (3, lower): consistent returns = stable portfolio.
-  const pq = scorePillar([
-    { v: m.calmarRatio,   w: 4, peers: pv("calmarRatio") },
-    { v: m.omegaRatio,    w: 5, peers: pv("omegaRatio") },
-    { v: m.rollingStdDev, w: 3, peers: pv("rollingStdDev"), lower: true },
-  ], 12, true);
-
-  // ── Pillar 7: Management & AUM (5%) — Phase 2 ────────────────────────────
-  // Bear Market Return (2): fund performance during benchmark down-months.
-  //   Higher (less negative) = manager preserves capital better.
-  // Rolling 1Y+ (2): % of rolling 1Y windows with positive return.
-  // Longevity (1): years of verified NAV history.
-  const ma = scorePillar([
-    { v: m.historyYears,     w: 1, peers: pv("historyYears") },
-    { v: m.rollingPos1y,     w: 2, peers: pv("rollingPos1y") },
-    { v: m.bearMarketReturn, w: 2, peers: pv("bearMarketReturn") },
-  ], 5, true);
-
-  // ── Fund Score ────────────────────────────────────────────────────────────
-  const ps = [ltc, stp, ra, dp, ce, pq, ma];
-  const totalEffW = ps.reduce((s, p) => s + p.effectiveWeight, 0);
-  const fundScore = totalEffW > 0
-    ? Math.max(0, Math.min(100, Math.round(
-        ps.reduce((s, p) => s + p.rawScore * p.effectiveWeight, 0) / totalEffW,
-      )))
-    : 0;
-
-  // ── Confidence + Final Published Score ───────────────────────────────────
-  const conf       = computeConfidenceScore(m);
-  const finalScore = Math.max(0, Math.min(100, Math.round(fundScore * 0.90 + conf * 0.10)));
-
-  const { rating, color: ratingColor } = getRating(finalScore);
-
-  return {
-    fundScore, finalScore, confidenceScore: conf, rating, ratingColor,
-    pillars: {
-      longTermConsistency:  ltc,
-      shortTermPerformance: stp,
-      riskAdjusted:         ra,
-      downsideProtection:   dp,
-      costEfficiency:       ce,
-      portfolioQuality:     pq,
-      managementAUM:        ma,
-    },
+  const pct = (v: number | null, arr: (number | null)[], lower = false): number => {
+    if (v == null) return 50;
+    const valid = arr.filter((x): x is number => x != null);
+    if (valid.length <= 1) return 50;
+    return percentileOf(valid, v, lower);
   };
-}
 
-// ─── Strengths / Weaknesses ───────────────────────────────────────────────────
+  // Pillar 1 — Long-Term Consistency (23%)
+  const ltScores = [
+    pct(m.cagr3y,  peers.map(p => p.cagr3y)),
+    pct(m.cagr5y,  peers.map(p => p.cagr5y)),
+    pct(m.cagr7y,  peers.map(p => p.cagr7y)),
+    pct(m.cagr10y, peers.map(p => p.cagr10y)),
+  ];
+  const ltAvail = ltScores.filter((_, i) => [m.cagr3y, m.cagr5y, m.cagr7y, m.cagr10y][i] != null);
+  const ltBase  = ltAvail.length ? ltAvail.reduce((a, b) => a + b, 0) / ltAvail.length : 50;
+  const conBonus = pct(m.consistencyBeatRate, peers.map(p => p.consistencyBeatRate));
+  const ltScore  = Math.round(ltBase * 0.75 + conBonus * 0.25);
 
-export function getStrengthsWeaknesses(pillars: EngineScoreResult["pillars"]): {
-  strengths: string[];
-  weaknesses: string[];
-} {
-  const entries = [
-    { name: "Long-Term Consistency",  p: pillars.longTermConsistency },
-    { name: "Short-Term Performance", p: pillars.shortTermPerformance },
-    { name: "Risk-Adjusted Returns",  p: pillars.riskAdjusted },
-    { name: "Downside Protection",    p: pillars.downsideProtection },
-    { name: "Cost Efficiency",        p: pillars.costEfficiency },
-    { name: "Portfolio Quality",      p: pillars.portfolioQuality },
-    { name: "Management",             p: pillars.managementAUM },
-  ].filter(e => e.p.available);
+  // Pillar 2 — Short-Term Performance (5%)
+  const stVals  = [m.ret1m, m.ret3m, m.ret6m];
+  const stPeers = [peers.map(p => p.ret1m), peers.map(p => p.ret3m), peers.map(p => p.ret6m)];
+  const stAvail = stVals.filter(v => v != null);
+  const stScore = stAvail.length
+    ? Math.round(stVals.map((v, i) => pct(v, stPeers[i])).filter((_, i) => stVals[i] != null)
+        .reduce((a, b) => a + b, 0) / stAvail.length)
+    : 50;
 
-  entries.sort((a, b) => b.p.rawScore - a.p.rawScore);
+  // Pillar 3 — Risk-Adjusted (20%)
+  const raScore = Math.round(
+    pct(m.sortino,          peers.map(p => p.sortino))          * 10/20 +
+    pct(m.sharpe,           peers.map(p => p.sharpe))           *  6/20 +
+    pct(m.informationRatio, peers.map(p => p.informationRatio)) *  4/20
+  );
+
+  // Pillar 4 — Downside Protection (20%)
+  const dpScore = Math.round(
+    pct(m.downsideCapture, peers.map(p => p.downsideCapture), true) *  8/20 +
+    pct(m.upsideCapture,   peers.map(p => p.upsideCapture))         *  3/20 +
+    pct(m.maxDrawdown,     peers.map(p => p.maxDrawdown),     true) *  4/20 +
+    pct(m.recoveryMonths,  peers.map(p => p.recoveryMonths),  true) *  3/20 +
+    pct(m.beta,            peers.map(p => p.beta),            true) *  1/20 +
+    pct(m.stdDev,          peers.map(p => p.stdDev),          true) *  1/20
+  );
+
+  // Pillar 5 — Cost Efficiency (15%)
+  const ceScore = Math.round(
+    pct(m.jensensAlpha,  peers.map(p => p.jensensAlpha))          *  9/15 +
+    pct(m.trackingError, peers.map(p => p.trackingError), true)   *  6/15
+  );
+
+  // Pillar 6 — Portfolio Quality (12%)
+  const pqScore = Math.round(
+    pct(m.calmarRatio,  peers.map(p => p.calmarRatio))          *  4/12 +
+    pct(m.omegaRatio,   peers.map(p => p.omegaRatio))           *  5/12 +
+    pct(m.rollingStdDev, peers.map(p => p.rollingStdDev), true) *  3/12
+  );
+
+  // Pillar 7 — Management & AUM (5%)
+  const mgScore = Math.round(
+    pct(m.rollingPos1y,       peers.map(p => p.rollingPos1y))       *  1/5 +
+    pct(m.rollingReturn1yAvg, peers.map(p => p.rollingReturn1yAvg)) *  2/5 +
+    pct(m.bearMarketReturn,   peers.map(p => p.bearMarketReturn))   *  2/5
+  );
+
+  const fundScore = Math.round(
+    ltScore * 0.23 +
+    stScore * 0.05 +
+    raScore * 0.20 +
+    dpScore * 0.20 +
+    ceScore * 0.15 +
+    pqScore * 0.12 +
+    mgScore * 0.05
+  );
+
+  const conf = computeConfidenceScore(m);
+  const finalScore = Math.round(fundScore * 0.90 + conf * 0.10);
+  const { rating, color } = getRating(finalScore);
+
   return {
-    strengths:  entries.slice(0, 2).filter(e => e.p.rawScore >= 65).map(e => e.name),
-    weaknesses: entries.slice(-2).filter(e => e.p.rawScore < 40).map(e => e.name),
+    fundScore,
+    confidenceScore: conf,
+    finalScore,
+    rating,
+    ratingColor: color,
+    pillars: {
+      longTermConsistency:  { rawScore: ltScore, weight: 0.23, label: "LT Consistency" },
+      shortTermPerformance: { rawScore: stScore, weight: 0.05, label: "Short-Term" },
+      riskAdjusted:         { rawScore: raScore, weight: 0.20, label: "Risk-Adjusted" },
+      downsideProtection:   { rawScore: dpScore, weight: 0.20, label: "Downside Prot." },
+      costEfficiency:       { rawScore: ceScore, weight: 0.15, label: "Cost Efficiency" },
+      portfolioQuality:     { rawScore: pqScore, weight: 0.12, label: "Portfolio Quality" },
+      managementAUM:        { rawScore: mgScore, weight: 0.05, label: "Management" },
+    },
   };
 }

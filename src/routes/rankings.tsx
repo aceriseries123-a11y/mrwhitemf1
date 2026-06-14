@@ -1,7 +1,9 @@
 /**
- * rankings.tsx — Composite Ranking Score + all pillar breakdown columns.
+ * rankings.tsx — Composite Ranking Score
  *
  * Ranking Score = Engine Score (50%) + Return Score (30%) + Explore Score (20%)
+ *
+ * Columns: Sno · Fund · Category · Ranking Score · Engine Score · Return Score · Explore Score
  * All columns sortable · Category dropdown filter · Color-coded category badges
  */
 import { createFileRoute, Link } from "@tanstack/react-router";
@@ -18,7 +20,7 @@ export const Route = createFileRoute("/rankings")({
   head: () => ({
     meta: [
       { title: "Rankings — QuantFund" },
-      { name: "description", content: "Composite ranking across Engine Score, Return Score, and Explore Score — every pillar visible." },
+      { name: "description", content: "Composite ranking across Engine Score, Return Score, and Explore Score." },
     ],
   }),
   component: Rankings,
@@ -28,10 +30,7 @@ const ALL_CATS: Array<"All" | QuantFundCategory> = [
   "All", ...(QUANTFUND_CATEGORIES.filter(c => c !== "Unknown") as QuantFundCategory[]),
 ];
 
-type SortKey = "schemeName" | "poolCategory" | "rankingScore" | "engineScore"
-  | "returnScore" | "exploreScore" | "qualityScore" | "performanceScore"
-  | "riskScore" | "downsideScore" | "costScore" | "portfolioScore"
-  | "managerScore" | "confidenceScore";
+type SortKey = "schemeName" | "poolCategory" | "rankingScore" | "engineScore" | "returnScore" | "exploreScore";
 type SortDir = "asc" | "desc";
 
 function CategoryBadge({ cat }: { cat: string }) {
@@ -89,20 +88,12 @@ function Rankings() {
     const exploreScore = computeExploreScore(f.metrics, peers);
     const { returnScore } = computeReturnScore(f.metrics, peers);
     const rankingScore = computeRankingScore(f.finalScore, returnScore, exploreScore);
-    const p = f.pillars;
     return {
       ...f,
       rankingScore,
-      engineScore:     f.finalScore,
+      engineScore:  f.finalScore,
       returnScore,
       exploreScore,
-      qualityScore:    p?.longTermConsistency.rawScore    ?? null,
-      performanceScore:p?.shortTermPerformance.rawScore   ?? null,
-      riskScore:       p?.riskAdjusted.rawScore           ?? null,
-      downsideScore:   p?.downsideProtection.rawScore     ?? null,
-      costScore:       p?.costEfficiency.rawScore         ?? null,
-      portfolioScore:  p?.portfolioQuality.rawScore       ?? null,
-      managerScore:    p?.managementAUM.rawScore          ?? null,
     };
   }), [allRanked, catPeersMap]);
 
@@ -141,7 +132,7 @@ function Rankings() {
 
   return (
     <AppShell title="Rankings">
-      <div className="mx-auto max-w-[1700px] space-y-5">
+      <div className="mx-auto max-w-[1200px] space-y-5">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <div className="flex items-center gap-2.5"><Trophy className="h-5 w-5 text-cyan" />
@@ -159,7 +150,7 @@ function Rankings() {
           <div className="flex flex-wrap gap-x-5 gap-y-1 font-mono text-[9px] text-muted-foreground">
             <span><span className="text-foreground">Ranking Score</span> = Engine 50% + Return 30% + Explore 20%</span>
             <span><span className="text-foreground">Engine Score</span> = 7-pillar fundamental quality × 90% + Confidence × 10%</span>
-            <span><span className="text-foreground">Return Score</span> = Short-Term (1W–6M) × 30% + Long-Term (1Y–7Y) × 70%</span>
+            <span><span className="text-foreground">Return Score</span> = ST(1D+1W+1M+3M+6M) × 30% + LT(Rolling 1Y/3Y/5Y/7Y) × 70%</span>
             <span><span className="text-foreground">Explore Score</span> = Sharpe 20% + Sortino 15% + Alpha 15% + IR 15% + RAR 15% + Captures 20%</span>
           </div>
         </div>
@@ -181,35 +172,25 @@ function Rankings() {
 
         <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1600px] text-left">
+            <table className="w-full min-w-[800px] text-left">
               <thead className="sticky top-0 z-10">
                 <tr className="border-b border-border bg-background/95 font-mono text-[9px] uppercase tracking-widest text-muted-foreground backdrop-blur">
                   <th className="w-10 p-3 text-center font-medium">#</th>
                   <SortTh label="Fund" k="schemeName" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} right={false} />
                   <SortTh label="Category" k="poolCategory" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} right={false} />
-                  {/* Composite */}
                   <SortTh label="Ranking Score" k="rankingScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} accent title="Engine(50%)+Return(30%)+Explore(20%)" />
                   <SortTh label="Engine" k="engineScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="7-pillar engine final score" />
-                  <SortTh label="Return" k="returnScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="ST×30%+LT×70% trailing returns" />
+                  <SortTh label="Return" k="returnScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="ST×30%+LT×70% rolling returns" />
                   <SortTh label="Explore" k="exploreScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Ratio-based: Sharpe/Sortino/Alpha/IR/RAR/Captures" />
-                  {/* Pillars */}
-                  <SortTh label="Quality" k="qualityScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="LT Consistency pillar 23%" />
-                  <SortTh label="Perf." k="performanceScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Short-Term Performance pillar 5%" />
-                  <SortTh label="Risk" k="riskScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Risk-Adjusted pillar 20%" />
-                  <SortTh label="Downside" k="downsideScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Downside Protection pillar 20%" />
-                  <SortTh label="Cost" k="costScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Cost Efficiency pillar 15%" />
-                  <SortTh label="Portfolio" k="portfolioScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Portfolio Quality pillar 12%" />
-                  <SortTh label="Manager" k="managerScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Management pillar 5%" />
-                  <SortTh label="Confidence" k="confidenceScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="History depth + data completeness" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
                 {displayed.length === 0 ? (
-                  <tr><td colSpan={15} className="py-16 text-center font-mono text-[11px] uppercase tracking-widest text-muted-foreground">No funds match</td></tr>
+                  <tr><td colSpan={7} className="py-16 text-center font-mono text-[11px] uppercase tracking-widest text-muted-foreground">No funds match</td></tr>
                 ) : displayed.map((f, idx) => (
                   <tr key={f.schemeCode} className="transition-colors hover:bg-cyan/[0.04]">
                     <td className="p-3 text-center font-mono text-[10px] tabular-nums text-muted-foreground">{idx + 1}</td>
-                    <td className="p-3 max-w-[220px]">
+                    <td className="p-3 max-w-[280px]">
                       <Link to="/fund/$id" params={{ id: f.schemeCode }}
                         className="block text-[12px] font-semibold leading-snug text-foreground transition-colors hover:text-cyan">{f.schemeName}</Link>
                       <p className="mt-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">{f.amc}</p>
@@ -226,14 +207,6 @@ function Rankings() {
                     <td className="p-3 text-right"><ScoreCell v={f.engineScore} neutral /></td>
                     <td className="p-3 text-right"><ScoreCell v={f.returnScore} /></td>
                     <td className="p-3 text-right"><ScoreCell v={f.exploreScore} /></td>
-                    <td className="p-3 text-right"><ScoreCell v={f.qualityScore     != null ? Math.round(f.qualityScore)     : null} /></td>
-                    <td className="p-3 text-right"><ScoreCell v={f.performanceScore != null ? Math.round(f.performanceScore) : null} /></td>
-                    <td className="p-3 text-right"><ScoreCell v={f.riskScore        != null ? Math.round(f.riskScore)        : null} /></td>
-                    <td className="p-3 text-right"><ScoreCell v={f.downsideScore    != null ? Math.round(f.downsideScore)    : null} /></td>
-                    <td className="p-3 text-right"><ScoreCell v={f.costScore        != null ? Math.round(f.costScore)        : null} /></td>
-                    <td className="p-3 text-right"><ScoreCell v={f.portfolioScore   != null ? Math.round(f.portfolioScore)   : null} /></td>
-                    <td className="p-3 text-right"><ScoreCell v={f.managerScore     != null ? Math.round(f.managerScore)     : null} /></td>
-                    <td className="p-3 text-right"><ScoreCell v={f.confidenceScore} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -241,7 +214,7 @@ function Rankings() {
           </div>
           <div className="border-t border-border bg-background/40 px-4 py-2.5">
             <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-              {displayed.length.toLocaleString()} of {allRanked.length.toLocaleString()} funds · Scroll right for all pillar columns
+              {displayed.length.toLocaleString()} of {allRanked.length.toLocaleString()} funds
             </span>
           </div>
         </div>

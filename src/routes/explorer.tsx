@@ -5,10 +5,9 @@
  *           Beta · Std Dev · Alpha · Sharpe · Sortino · Upside Cap ·
  *           Downside Cap · Info Ratio · Risk-Adj Ret
  *
- * Upside Capture shown as "+X.X%" (positive) — how much of benchmark upside captured.
- * Downside Capture shown as "X.X%" colored red — how much benchmark downside captured
- *   (lower = better, so green < 80%, red > 100%).
- * Expense Ratio: not available from mfapi.in public feed — shown as "—".
+ * Upside Capture: full-green bar column. +1 if ≥ 100% (captured more than benchmark), -1 if < 100%.
+ * Downside Capture: full-red bar column. +1 if ≤ 100% (fell less than benchmark), -1 if > 100%.
+ * Expense Ratio: fetched from Kuvera via /api/public/scheme-ter.
  */
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState, useEffect } from "react";
@@ -79,44 +78,68 @@ function RatioCell({ v, pct, lowerBetter = false }: { v: number | null; pct?: bo
   );
 }
 
-/** Upside Capture: raw % with + prefix, colored by quality */
+/**
+ * Upside Capture: full-green bar.
+ * +1 if v ≥ 100 (captured more than benchmark on up days)
+ * -1 if v < 100  (captured less)
+ */
 function UpCaptureCell({ v }: { v: number | null }) {
   if (v == null) return <span className="font-mono text-[10px] text-muted-foreground">—</span>;
-  // >100% = captured MORE than benchmark on up days (green = excellent)
-  // 85-100% = captured slightly less (neutral)
-  // <85% = significantly underperformed on up days (red)
-  const color = v >= 100 ? "text-positive" : v >= 85 ? "text-warning" : "text-negative";
+  const isGood = v >= 100;
+  const flag = isGood ? "+1" : "-1";
+  const flagColor = isGood ? "text-positive" : "text-negative";
+  // Bar: capped at 150% for display width (100% = full bar means matching benchmark)
+  const barWidth = Math.min(100, (v / 150) * 100);
   return (
     <div className="inline-flex flex-col items-end gap-0.5">
-      <span className={`font-mono text-[12px] tabular-nums font-bold ${color}`}>
-        +{v.toFixed(1)}%
-      </span>
-      <div className="h-1 w-10 overflow-hidden rounded-full bg-border">
-        <div className="h-full rounded-full bg-positive/60" style={{ width: `${Math.min(100, v / 1.5)}%` }} />
+      <div className="flex items-center gap-1.5">
+        <span className={`font-mono text-[10px] font-bold tabular-nums ${flagColor}`}>{flag}</span>
+        <span className="font-mono text-[11px] tabular-nums text-foreground font-semibold">
+          +{v.toFixed(1)}%
+        </span>
+      </div>
+      {/* Full-green bar */}
+      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-positive/15">
+        <div
+          className="h-full rounded-full bg-positive"
+          style={{ width: `${barWidth}%` }}
+        />
       </div>
     </div>
   );
 }
 
-/** Downside Capture: raw % colored by quality (lower = better = green) */
+/**
+ * Downside Capture: full-red bar.
+ * +1 if v ≤ 100 (fell less than benchmark on down days)
+ * -1 if v > 100  (fell more than benchmark)
+ */
 function DnCaptureCell({ v }: { v: number | null }) {
   if (v == null) return <span className="font-mono text-[10px] text-muted-foreground">—</span>;
-  // <80% = captured much less downside than benchmark (green = excellent)
-  // 80-100% = captured slightly less (warning)
-  // >100% = fell MORE than benchmark on down days (red = bad)
-  const color = v <= 80 ? "text-positive" : v <= 100 ? "text-warning" : "text-negative";
+  const isGood = v <= 100;
+  const flag = isGood ? "+1" : "-1";
+  const flagColor = isGood ? "text-positive" : "text-negative";
+  // Bar: capped at 150%; fill is always red
+  const barWidth = Math.min(100, (v / 150) * 100);
   return (
     <div className="inline-flex flex-col items-end gap-0.5">
-      <span className={`font-mono text-[12px] tabular-nums font-bold ${color}`}>
-        {v.toFixed(1)}%
-      </span>
-      <div className="h-1 w-10 overflow-hidden rounded-full bg-border">
-        <div className={`h-full rounded-full ${v <= 80 ? "bg-positive/60" : v <= 100 ? "bg-warning/60" : "bg-negative/60"}`}
-          style={{ width: `${Math.min(100, v / 1.5)}%` }} />
+      <div className="flex items-center gap-1.5">
+        <span className={`font-mono text-[10px] font-bold tabular-nums ${flagColor}`}>{flag}</span>
+        <span className="font-mono text-[11px] tabular-nums text-foreground font-semibold">
+          {v.toFixed(1)}%
+        </span>
+      </div>
+      {/* Full-red bar */}
+      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-negative/15">
+        <div
+          className="h-full rounded-full bg-negative"
+          style={{ width: `${barWidth}%` }}
+        />
       </div>
     </div>
   );
 }
+
 function ScoreCell({ v }: { v: number | null }) {
   if (v == null) return <span className="font-mono text-[10px] text-muted-foreground">—</span>;
   const color = v >= 75 ? "text-cyan font-bold" : v >= 50 ? "text-foreground font-semibold" : "text-muted-foreground";
@@ -138,6 +161,32 @@ function FundExplorer() {
 
   const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
   useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
+
+  // Expense Ratio map: schemeCode → TER %
+  const [terMap, setTerMap] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    if (allRanked.length === 0) return;
+    const codes = allRanked.map(f => f.schemeCode);
+    const BATCH = 60;
+    let cancelled = false;
+    const fetchAll = async () => {
+      const newMap = new Map<string, number>();
+      for (let i = 0; i < codes.length; i += BATCH) {
+        if (cancelled) break;
+        const batch = codes.slice(i, i + BATCH);
+        try {
+          const res = await fetch(`/api/public/scheme-ter?codes=${batch.join(",")}`);
+          if (res.ok) {
+            const data = await res.json() as Record<string, number>;
+            for (const [k, val] of Object.entries(data)) newMap.set(k, val);
+          }
+        } catch { /* best-effort */ }
+      }
+      if (!cancelled) setTerMap(new Map(newMap));
+    };
+    fetchAll();
+    return () => { cancelled = true; };
+  }, [allRanked.length]);
 
   const catPeersMap = useMemo(() => {
     const map = new Map<string, RankedFund[]>();
@@ -167,7 +216,7 @@ function FundExplorer() {
       if (sortKey === "poolCategory") return dir * (a.poolCategory as string).localeCompare(b.poolCategory as string);
       const getV = (f: typeof a): number | null => {
         if (sortKey === "exploreScore")      return f.exploreScore;
-        if (sortKey === "expenseRatio")      return null; // always null (no data)
+        if (sortKey === "expenseRatio")      return terMap.get(f.schemeCode) ?? null;
         if (sortKey === "beta")              return f.metrics.beta;
         if (sortKey === "stdDev")            return f.metrics.stdDev;
         if (sortKey === "jensensAlpha")      return f.metrics.jensensAlpha;
@@ -183,7 +232,7 @@ function FundExplorer() {
       if (va == null && vb == null) return 0; if (va == null) return 1; if (vb == null) return -1;
       return dir * (va - vb);
     });
-  }, [augmented, catFilter, search, sortKey, sortDir]);
+  }, [augmented, catFilter, search, sortKey, sortDir, terMap]);
 
   if (allRanked.length === 0) return (
     <AppShell title="Explorer">
@@ -216,8 +265,9 @@ function FundExplorer() {
         <div className="rounded-xl border border-border bg-surface/60 px-4 py-3">
           <div className="flex flex-wrap gap-x-6 gap-y-1 font-mono text-[9px] text-muted-foreground">
             <span><span className="text-cyan font-bold">Explore Score</span> = Sharpe(20%)+Sortino(15%)+Alpha(15%)+IR(15%)+RAR(15%)+Upside(10%)+Downside(10%)</span>
-            <span><span className="text-positive font-bold">↑ Upside Cap</span> = fund return ÷ benchmark return on rising months × 100% · green ≥ 100% (fund captured more) · <span className="text-negative font-bold">↓ Downside Cap</span> = same on falling months · green ≤ 80% (fell less than benchmark)</span>
-            <span><span className="text-foreground">Expense Ratio</span>: not available in public mfapi.in / AMFI feed — requires AMC-specific data</span>
+            <span><span className="text-positive font-bold">↑ Upside Cap</span> · full-green bar · <span className="text-positive">+1</span> if ≥100% (captured more rally than benchmark) · <span className="text-negative">-1</span> if &lt;100%</span>
+            <span><span className="text-negative font-bold">↓ Downside Cap</span> · full-red bar · <span className="text-positive">+1</span> if ≤100% (fell less than benchmark) · <span className="text-negative">-1</span> if &gt;100%</span>
+            <span><span className="text-foreground">Exp. Ratio</span>: fetched from Kuvera via ISIN · may show "—" if unavailable</span>
           </div>
         </div>
 
@@ -242,18 +292,17 @@ function FundExplorer() {
               <thead className="sticky top-0 z-10">
                 <tr className="border-b border-border bg-background/95 font-mono text-[9px] uppercase tracking-widest text-muted-foreground backdrop-blur">
                   <th className="w-10 p-3 text-center font-medium">Sno</th>
-                  {/* Fund name — non-sortable header */}
                   <th className="p-3 font-medium text-muted-foreground">Fund</th>
                   <th className="p-3 font-medium text-muted-foreground">Category</th>
                   <SortTh label="Explore Score" k="exploreScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} accent title="7-component ratio score 0-100 (category-relative)" />
-                  <SortTh label="Exp. Ratio" k="expenseRatio" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="TER — not in public feed" />
+                  <SortTh label="Exp. Ratio" k="expenseRatio" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="TER % — fetched from Kuvera via ISIN" />
                   <SortTh label="Beta" k="beta" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Market sensitivity vs category benchmark" />
                   <SortTh label="Std Dev" k="stdDev" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Annualised volatility of daily returns" />
                   <SortTh label="Alpha (J)" k="jensensAlpha" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Jensen's Alpha = fund 3Y CAGR − (RFR + β × (bm−RFR))" />
                   <SortTh label="Sharpe" k="sharpe" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="(Return − RFR) / std dev · higher better" />
                   <SortTh label="Sortino" k="sortino" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="(Return − RFR) / downside vol · higher better" />
-                  <SortTh label="↑ Upside Cap %" k="upsideCapture" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Upside Capture % — fund return / benchmark return on UP months × 100. >100% = fund captured more of the rally. Green ≥ 100%, yellow 85-100%, red < 85%." />
-                  <SortTh label="↓ Downside Cap %" k="downsideCapture" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Downside Capture % — fund return / benchmark return on DOWN months × 100. <100% = fund fell less than benchmark. Green ≤ 80%, yellow 80-100%, red > 100%." />
+                  <SortTh label="↑ Upside Cap" k="upsideCapture" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Full-green bar. +1 if ≥100% (fund captured more of the rally). -1 if <100%." />
+                  <SortTh label="↓ Downside Cap" k="downsideCapture" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Full-red bar. +1 if ≤100% (fund fell less than benchmark). -1 if >100%." />
                   <SortTh label="Info Ratio" k="informationRatio" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Annualised excess return / tracking error" />
                   <SortTh label="Risk-Adj Ret" k="riskAdjReturn" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Annual Return Avg / Std Dev · higher better" />
                 </tr>
@@ -263,6 +312,7 @@ function FundExplorer() {
                   <tr><td colSpan={14} className="py-16 text-center font-mono text-[11px] uppercase tracking-widest text-muted-foreground">No funds match</td></tr>
                 ) : displayed.map((f, idx) => {
                   const m = f.metrics;
+                  const ter = terMap.get(f.schemeCode);
                   return (
                     <tr key={f.schemeCode} className="transition-colors hover:bg-cyan/[0.04]">
                       <td className="p-3 text-center font-mono text-[10px] tabular-nums text-muted-foreground">{idx + 1}</td>
@@ -273,9 +323,11 @@ function FundExplorer() {
                       </td>
                       <td className="p-3"><CategoryBadge cat={f.poolCategory as string} /></td>
                       <td className="p-3 text-right"><ScoreCell v={f.exploreScore} /></td>
-                      {/* Expense Ratio — not available in public feed */}
+                      {/* Expense Ratio */}
                       <td className="p-3 text-right">
-                        <span className="font-mono text-[10px] text-muted-foreground" title="TER not available in public AMFI/mfapi feed">—</span>
+                        {ter != null
+                          ? <span className={`font-mono text-[11px] tabular-nums ${ter < 1 ? "text-positive" : ter < 1.5 ? "text-foreground" : "text-negative"}`}>{ter.toFixed(2)}%</span>
+                          : <span className="font-mono text-[10px] text-muted-foreground" title="TER not yet loaded">—</span>}
                       </td>
                       <td className="p-3 text-right">
                         {m.beta != null ? <span className={`font-mono text-[11px] tabular-nums ${m.beta < 0.8 ? "text-positive" : m.beta < 1.1 ? "text-foreground" : "text-negative"}`}>{fmtNum(m.beta, 2)}</span>
@@ -314,7 +366,7 @@ function FundExplorer() {
             </table>
           </div>
           <div className="border-t border-border bg-background/40 px-4 py-2.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-            {displayed.length.toLocaleString()} funds shown · ↑ Upside Cap: green ≥ 100%, ↓ Downside Cap: green ≤ 80%, red &gt; 100% · Expense Ratio requires AMC-level data
+            {displayed.length.toLocaleString()} funds shown · ↑ Upside Cap (green bar): +1 ≥100%, -1 &lt;100% · ↓ Downside Cap (red bar): +1 ≤100%, -1 &gt;100%
           </div>
         </div>
       </div>

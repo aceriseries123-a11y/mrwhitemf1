@@ -4,9 +4,8 @@
  * Explore Score  — 7-component ratio score (0–100), category-relative.
  * Return Score   — short/long-term return percentile composite (0–100).
  *
- * Both are computed from EngineMetrics + category peers so no extra
- * NAV fetching is needed; Dashboard populates fund-store and every other
- * page reads from there.
+ * ST (30%): 1D(20%) + 1W(20%) + 1M(20%) + 3M(20%) + 6M(20%)
+ * LT (70%): Rolling 1Y(25%) + Rolling 3Y(25%) + Rolling 5Y(25%) + Rolling 7Y(25%)
  */
 
 import type { EngineMetrics } from "./scoring-engine";
@@ -42,9 +41,6 @@ export function computeRiskAdjReturn(m: EngineMetrics): number | null {
 //   Risk-Adjusted Return  15%
 //   Upside Capture        10%
 //   Downside Capture      10% (lower is better)
-//
-// Each component is percentile-ranked within the category peer group so
-// scores are category-relative, not cross-category.
 
 export function computeExploreScore(
   m: EngineMetrics,
@@ -84,10 +80,10 @@ export function computeExploreScore(
 // ─── Return Score ─────────────────────────────────────────────────────────────
 //
 // Short-Term (weight = 30%):
-//   1W  25%,  1M  25%,  3M  25%,  6M  25%
+//   1D  20%,  1W  20%,  1M  20%,  3M  20%,  6M  20%
 //
 // Long-Term (weight = 70%):
-//   1Y  15%,  3Y  25%,  5Y  30%,  7Y  30%
+//   Rolling 1Y  25%,  Rolling 3Y  25%,  Rolling 5Y  25%,  Rolling 7Y  25%
 //
 // All periods percentile-ranked within peer group before weighting.
 
@@ -102,10 +98,11 @@ export function computeReturnScore(
   peers: EngineMetrics[],
 ): ReturnScoreBreakdown {
   const stComps: { v: number | null; all: (number | null)[]; w: number }[] = [
-    { v: m.ret1w, all: peers.map(p => p.ret1w), w: 0.25 },
-    { v: m.ret1m, all: peers.map(p => p.ret1m), w: 0.25 },
-    { v: m.ret3m, all: peers.map(p => p.ret3m), w: 0.25 },
-    { v: m.ret6m, all: peers.map(p => p.ret6m), w: 0.25 },
+    { v: m.ret1d, all: peers.map(p => p.ret1d), w: 0.20 },
+    { v: m.ret1w, all: peers.map(p => p.ret1w), w: 0.20 },
+    { v: m.ret1m, all: peers.map(p => p.ret1m), w: 0.20 },
+    { v: m.ret3m, all: peers.map(p => p.ret3m), w: 0.20 },
+    { v: m.ret6m, all: peers.map(p => p.ret6m), w: 0.20 },
   ];
 
   let stScore = 0, stW = 0;
@@ -118,10 +115,10 @@ export function computeReturnScore(
   const shortTermScore = stW > 0 ? Math.round(stScore / stW) : null;
 
   const ltComps: { v: number | null; all: (number | null)[]; w: number }[] = [
-    { v: m.ret1y,  all: peers.map(p => p.ret1y),  w: 0.15 },
-    { v: m.cagr3y, all: peers.map(p => p.cagr3y), w: 0.25 },
-    { v: m.cagr5y, all: peers.map(p => p.cagr5y), w: 0.30 },
-    { v: m.cagr7y, all: peers.map(p => p.cagr7y), w: 0.30 },
+    { v: m.rollingReturn1yAvg, all: peers.map(p => p.rollingReturn1yAvg), w: 0.25 },
+    { v: m.rollingReturn3yAvg, all: peers.map(p => p.rollingReturn3yAvg), w: 0.25 },
+    { v: m.rollingReturn5yAvg, all: peers.map(p => p.rollingReturn5yAvg), w: 0.25 },
+    { v: m.rollingReturn7yAvg, all: peers.map(p => p.rollingReturn7yAvg), w: 0.25 },
   ];
 
   let ltScore = 0, ltW = 0;
@@ -135,10 +132,10 @@ export function computeReturnScore(
 
   let returnScore: number | null = null;
   if (shortTermScore != null || longTermScore != null) {
-    const stF = shortTermScore ?? 0;
-    const ltF = longTermScore ?? 0;
+    const stF  = shortTermScore ?? 0;
+    const ltF  = longTermScore ?? 0;
     const stWf = shortTermScore != null ? 0.30 : 0;
-    const ltWf = longTermScore != null ? 0.70 : 0;
+    const ltWf = longTermScore  != null ? 0.70 : 0;
     const total = stWf + ltWf;
     returnScore = total > 0 ? Math.round((stF * stWf + ltF * ltWf) / total) : null;
   }
@@ -152,9 +149,6 @@ export function computeReturnScore(
 //   Engine Score (7-pillar fundamental quality)   50%
 //   Return Score  (trailing returns ST + LT)       30%
 //   Explore Score (ratio-based quality metrics)    20%
-//
-// Uses available weights only (graceful degradation when a score is null).
-// Requires at least Engine Score to produce a result.
 
 export function computeRankingScore(
   engineFinalScore: number | null,
@@ -172,6 +166,6 @@ export function computeRankingScore(
   if (returnScore      != null) { score += returnScore      * RETURN_W;  totalW += RETURN_W; }
   if (exploreScore     != null) { score += exploreScore     * EXPLORE_W; totalW += EXPLORE_W; }
 
-  if (totalW < ENGINE_W) return null; // Engine Score is mandatory
+  if (totalW < ENGINE_W) return null;
   return Math.round(score / totalW);
 }

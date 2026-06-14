@@ -13,20 +13,20 @@
  *   • Keyed by today's date — auto-expires daily (NAV publishes once/day)
  *   • Old keys are cleaned up on read
  *   • Save is best-effort (quota exceeded → no-op)
+ *
+ * v2: added ret1d, rollingReturn3yAvg, rollingReturn5yAvg, rollingReturn7yAvg
  */
 
 import type { EngineMetrics } from "./scoring-engine";
 
 const TODAY = new Date().toISOString().slice(0, 10);
-const KEY = `qf-engine-v1-${TODAY}`;
-const KEY_PREFIX = "qf-engine-v1-";
+const KEY = `qf-engine-v2-${TODAY}`;
+const KEY_PREFIX = "qf-engine-v";
 
 /** Load all cached EngineMetrics for today. Returns empty Map if none. */
 export function loadEngineCache(): Map<string, EngineMetrics> {
   const map = new Map<string, EngineMetrics>();
   try {
-    // FIX: collect stale keys first, then delete — removing during index-based
-    // iteration shifts indices and silently skips entries.
     const staleKeys: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
