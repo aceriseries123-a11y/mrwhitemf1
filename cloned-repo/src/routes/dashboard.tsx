@@ -58,12 +58,12 @@ function ScoreBar({ value }: { value: number | null }) {
   );
 }
 
-function SortTh({ label, k, sortKey, sortDir, onSort, right = true }: {
-  label: string; k: SortKey; sortKey: SortKey; sortDir: SortDir; onSort: (k: SortKey) => void; right?: boolean;
+function SortTh({ label, k, sortKey, sortDir, onSort, right = true, title }: {
+  label: string; k: SortKey; sortKey: SortKey; sortDir: SortDir; onSort: (k: SortKey) => void; right?: boolean; title?: string;
 }) {
   const active = sortKey === k;
   return (
-    <th className={`p-3 font-medium whitespace-nowrap ${right ? "text-right" : ""}`}>
+    <th className={`p-3 font-medium whitespace-nowrap ${right ? "text-right" : ""}`} title={title}>
       <button onClick={() => onSort(k)}
         className={`inline-flex items-center gap-0.5 transition-colors ${active ? "text-cyan" : "text-muted-foreground hover:text-foreground"}`}>
         {label}
