@@ -540,9 +540,10 @@ export function getRating(score: number): { rating: string; color: string; bg: s
 // ─── Score one fund with peer context ─────────────────────────────────────────
 
 export interface PillarResult {
-  rawScore: number;
-  weight:   number;
-  label:    string;
+  rawScore:  number;
+  weight:    number;
+  label:     string;
+  available: boolean;
 }
 
 export interface EngineScoreResult {
@@ -652,13 +653,34 @@ export function scoreWithPeers(
     rating,
     ratingColor: color,
     pillars: {
-      longTermConsistency:  { rawScore: ltScore, weight: 0.23, label: "LT Consistency" },
-      shortTermPerformance: { rawScore: stScore, weight: 0.05, label: "Short-Term" },
-      riskAdjusted:         { rawScore: raScore, weight: 0.20, label: "Risk-Adjusted" },
-      downsideProtection:   { rawScore: dpScore, weight: 0.20, label: "Downside Prot." },
-      costEfficiency:       { rawScore: ceScore, weight: 0.15, label: "Cost Efficiency" },
-      portfolioQuality:     { rawScore: pqScore, weight: 0.12, label: "Portfolio Quality" },
-      managementAUM:        { rawScore: mgScore, weight: 0.05, label: "Management" },
+      longTermConsistency:  { rawScore: ltScore, weight: 0.23, label: "LT Consistency",   available: ltScore > 0 },
+      shortTermPerformance: { rawScore: stScore, weight: 0.05, label: "Short-Term",        available: stScore > 0 },
+      riskAdjusted:         { rawScore: raScore, weight: 0.20, label: "Risk-Adjusted",     available: raScore > 0 },
+      downsideProtection:   { rawScore: dpScore, weight: 0.20, label: "Downside Prot.",    available: dpScore > 0 },
+      costEfficiency:       { rawScore: ceScore, weight: 0.15, label: "Cost Efficiency",   available: ceScore > 0 },
+      portfolioQuality:     { rawScore: pqScore, weight: 0.12, label: "Portfolio Quality", available: pqScore > 0 },
+      managementAUM:        { rawScore: mgScore, weight: 0.05, label: "Management",        available: mgScore > 0 },
     },
+  };
+}
+
+export function getStrengthsWeaknesses(pillars: EngineScoreResult["pillars"]): {
+  strengths: string[];
+  weaknesses: string[];
+} {
+  const entries = [
+    { name: "Long-Term Consistency",  p: pillars.longTermConsistency },
+    { name: "Short-Term Performance", p: pillars.shortTermPerformance },
+    { name: "Risk-Adjusted Returns",  p: pillars.riskAdjusted },
+    { name: "Downside Protection",    p: pillars.downsideProtection },
+    { name: "Cost Efficiency",        p: pillars.costEfficiency },
+    { name: "Portfolio Quality",      p: pillars.portfolioQuality },
+    { name: "Management",             p: pillars.managementAUM },
+  ].filter(e => e.p.available);
+
+  entries.sort((a, b) => b.p.rawScore - a.p.rawScore);
+  return {
+    strengths:  entries.slice(0, 2).filter(e => e.p.rawScore >= 65).map(e => e.name),
+    weaknesses: entries.slice(-2).filter(e => e.p.rawScore < 40).map(e => e.name),
   };
 }
