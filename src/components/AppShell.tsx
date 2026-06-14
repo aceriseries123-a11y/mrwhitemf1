@@ -1,6 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
-  LayoutDashboard, Search, GitCompare, Briefcase, Filter,
+  LayoutDashboard, Search, GitCompare, Briefcase, Filter, BarChart3,
   History, FlaskConical, Trophy, Settings, Activity, Menu, X,
   TrendingUp, TrendingDown, Minus, Bell,
 } from "lucide-react";
@@ -17,6 +17,7 @@ const NAV = [
   { to: "/portfolio", label: "Portfolio", icon: Briefcase },
   { to: "/backtest", label: "Backtesting", icon: History },
   { to: "/research-desk", label: "Research Desk", icon: FlaskConical },
+  { to: "/returns-historical", label: "Returns Historical", icon: BarChart3 },
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
