@@ -662,3 +662,25 @@ export function scoreWithPeers(
     },
   };
 }
+
+// ─── Strengths & Weaknesses summary ────────────────────────────────────────
+
+export interface StrengthsWeaknesses {
+  strengths: string[];
+  weaknesses: string[];
+}
+
+export function getStrengthsWeaknesses(
+  pillars: EngineScoreResult["pillars"],
+): StrengthsWeaknesses {
+  const entries = Object.values(pillars);
+  const strengths = entries
+    .filter((p) => p.rawScore >= 70)
+    .sort((a, b) => b.rawScore - a.rawScore)
+    .map((p) => p.label);
+  const weaknesses = entries
+    .filter((p) => p.rawScore < 50)
+    .sort((a, b) => a.rawScore - b.rawScore)
+    .map((p) => p.label);
+  return { strengths, weaknesses };
+}
