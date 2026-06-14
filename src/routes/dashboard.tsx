@@ -26,7 +26,7 @@ const POOL_CATS = QUANTFUND_CATEGORIES.filter(c => c !== "Unknown") as QuantFund
 const ALL_CATS: Array<"All" | QuantFundCategory> = ["All", ...POOL_CATS];
 
 type PoolEntry = { schemeCode: string; schemeName: string; amc: string; nav: number; date: string; category: string; poolCategory: QuantFundCategory };
-type SortKey = "rank" | "schemeName" | "poolCategory" | "finalScore" | "nav" | "annualReturnAvg" | "rollingPos1y";
+type SortKey = "rank" | "schemeName" | "poolCategory" | "finalScore" | "nav" | "annualReturnAvg" | "rollingReturn1yAvg";
 type SortDir = "asc" | "desc";
 
 function tone(v: number | null) {
@@ -208,7 +208,7 @@ function DashboardPage() {
       if (sortKey === "poolCategory") return dir * (a.poolCategory as string).localeCompare(b.poolCategory as string);
       if (sortKey === "nav") return dir * ((a.nav ?? 0) - (b.nav ?? 0));
       if (sortKey === "annualReturnAvg") return dir * ((a.metrics.annualReturnAvg ?? -999) - (b.metrics.annualReturnAvg ?? -999));
-      if (sortKey === "rollingPos1y") return dir * ((a.metrics.rollingPos1y ?? -1) - (b.metrics.rollingPos1y ?? -1));
+      if (sortKey === "rollingReturn1yAvg") return dir * ((a.metrics.rollingReturn1yAvg ?? -999) - (b.metrics.rollingReturn1yAvg ?? -999));
       return dir * ((a.finalScore ?? -1) - (b.finalScore ?? -1));
     });
   }, [allRanked, catFilter, search, sortKey, sortDir]);
@@ -271,7 +271,7 @@ function DashboardPage() {
           <p className="font-mono text-[10px] leading-relaxed text-muted-foreground">
             <span className="font-bold text-cyan">Engine Score</span> — 7-pillar, category-relative:
             LT Consistency <span className="text-foreground">23%</span> · Risk-Adjusted <span className="text-foreground">20%</span> · Downside Prot. <span className="text-foreground">20%</span> · Cost Efficiency <span className="text-foreground">15%</span> · Portfolio Quality <span className="text-foreground">12%</span> · Short-Term <span className="text-foreground">5%</span> · Management <span className="text-foreground">5%</span>
-            &nbsp;·&nbsp;<span className="font-bold text-cyan">Annual Ret Avg</span> = arithmetic mean of each calendar year's Jan→Dec return
+            &nbsp;·&nbsp;<span className="font-bold text-cyan">Avg Cal-Yr Ret</span> = mean of each calendar year's return · <span className="font-bold text-cyan">Rolling 1Y Avg</span> = mean of every rolling 1Y return window
           </p>
         </div>
 
@@ -290,8 +290,8 @@ function DashboardPage() {
                     <SortTh label="Score" k="finalScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                     <SortTh label="NAV ₹" k="nav" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                     <th className="p-3 text-right font-medium whitespace-nowrap text-muted-foreground">Fund Size</th>
-                    <SortTh label="Ann Ret Avg" k="annualReturnAvg" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                    <SortTh label="Rolling 1Y+" k="rollingPos1y" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    <SortTh label="Avg Cal-Yr Ret" k="annualReturnAvg" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    <SortTh label="Rolling 1Y Avg" k="rollingReturn1yAvg" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/60">
@@ -323,11 +323,27 @@ function DashboardPage() {
                         <td className="p-3 text-right">
                           <span className="font-mono text-[10px] text-muted-foreground" title="AUM not available in public AMFI feed">—</span>
                         </td>
-                        <td className={`p-3 text-right font-mono text-[11px] font-bold tabular-nums ${tone(m.annualReturnAvg)}`}>
-                          {fmtPct(m.annualReturnAvg, { signed: true })}
+                        <td className="p-3 text-right" title={
+                            m.calendarYearReturns?.length
+                              ? m.calendarYearReturns.map((r, i) => {
+                                  const startYear = new Date(series ? series[0]?.t ?? 0 : 0).getUTCFullYear();
+                                  return `${(r * 100 >= 0 ? "+" : "") + (r * 100).toFixed(1)}%`;
+                                }).join(" · ")
+                              : "Insufficient history for calendar-year calculation"
+                          }>
+                          <div className="inline-flex flex-col items-end gap-0.5">
+                            <span className={`font-mono text-[11px] font-bold tabular-nums ${tone(m.annualReturnAvg)}`}>
+                              {fmtPct(m.annualReturnAvg, { signed: true })}
+                            </span>
+                            {m.calendarYearReturns?.length > 0 && (
+                              <span className="font-mono text-[8px] text-muted-foreground">
+                                {m.calendarYearReturns.length}yr avg
+                              </span>
+                            )}
+                          </div>
                         </td>
-                        <td className="p-3 text-right font-mono text-[11px] tabular-nums text-foreground">
-                          {m.rollingPos1y != null ? `${(m.rollingPos1y * 100).toFixed(0)}%` : "—"}
+                        <td className={`p-3 text-right font-mono text-[11px] font-bold tabular-nums ${tone(m.rollingReturn1yAvg)}`}>
+                          {m.rollingReturn1yAvg != null ? fmtPct(m.rollingReturn1yAvg, { signed: true }) : "—"}
                         </td>
                       </tr>
                     );
@@ -344,9 +360,9 @@ function DashboardPage() {
         )}
 
         <p className="text-[10px] leading-relaxed text-muted-foreground">
-          <span className="text-foreground">Annual Ret Avg</span> = arithmetic mean of calendar-year simple returns (Jan 1 → Dec 31 each year, all available years).
-          <span className="text-foreground ml-2">Rolling 1Y+</span> = % of all rolling 1-year windows with positive return (timestamp-based, daily resolution).
-          Fund Size data not available in public AMFI/mfapi feed.
+          <span className="text-foreground font-semibold">Avg Cal-Yr Ret</span> = arithmetic mean of each calendar year's Jan→Dec simple return. Hover cell to see per-year values.
+          <span className="text-foreground font-semibold ml-2">Rolling 1Y Avg</span> = mean of ALL rolling 1-year point-to-point returns (every trading day as endpoint). Positive = investor who held any random 1-year period earned on average this much.
+          Fund Size (AUM) not in public AMFI/mfapi.in feed — shown as "—".
         </p>
       </div>
     </AppShell>
