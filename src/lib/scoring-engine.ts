@@ -171,6 +171,24 @@ function rollingReturnStdDev(series: NavPoint[], years: number): number | null {
   const v = returns.reduce((s, r) => s + (r - mean) ** 2, 0) / (returns.length - 1);
   return Math.sqrt(v);
 }
+/**
+ * Rolling Return Average — arithmetic mean of all rolling `years`-year point-to-point returns.
+ * Answers: "If someone invested for exactly 1 year on any random day, what was their average return?"
+ * Returns a fraction (e.g. 0.12 = 12%). Requires ≥ 8 valid windows.
+ */
+function rollingReturnAvg(series: NavPoint[], years: number): number | null {
+  const windowMs = years * YEAR_MS;
+  const minMs = windowMs * 0.85;
+  const returns: number[] = [];
+  for (let i = series.length - 1; i >= 0; i--) {
+    const start = navAtOrBefore(series, series[i].t - windowMs);
+    if (!start) break;
+    if (series[i].t - start.t < minMs) continue;
+    const r = series[i].nav / start.nav - 1;
+    if (isFinite(r)) returns.push(r);
+  }
+  return returns.length >= 8 ? returns.reduce((a, b) => a + b, 0) / returns.length : null;
+}
 
 /**
  * Omega Ratio — probability-weighted return quality above the daily risk-free rate.
@@ -373,6 +391,10 @@ export interface EngineMetrics {
 
   // Pillar 7 — Management & AUM (Phase 2: Longevity 1 + Rolling 1Y+ 2 + Bear Mkt Return 2)
   rollingPos1y:     number | null;
+  /** Arithmetic mean of all rolling 1Y point-to-point returns — "expected return from any random 1Y hold". */
+  rollingReturn1yAvg: number | null;
+  /** Calendar-year simple returns as fractions, chronological. E.g. [0.124, -0.101, 0.283]. */
+  calendarYearReturns: number[];
   /**
    * Annualised fund return during benchmark down-months.
    * Higher (less negative) = fund preserves capital in bear markets = better management.
@@ -388,7 +410,7 @@ export interface EngineMetrics {
 // then returns the simple arithmetic average of all years.
 // Also exports min/max year return for display in tooltips.
 
-function computeCalendarYearReturns(series: NavPoint[]): number[] {
+export function computeCalendarYearReturns(series: NavPoint[]): number[] {
   if (series.length < 2) return [];
   const firstYear = new Date(series[0].t).getUTCFullYear();
   const lastYear  = new Date(series[series.length - 1].t).getUTCFullYear();
@@ -487,6 +509,8 @@ export function computeEngineMetrics(
     rollingStdDev: rollingReturnStdDev(series, 1),
 
     rollingPos1y:     rollingPositiveRate(series, 1),
+    rollingReturn1yAvg: rollingReturnAvg(series, 1),
+    calendarYearReturns: computeCalendarYearReturns(series),
     bearMarketReturn: bm.bearMarketReturn,
 
     historyYears,
