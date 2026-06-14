@@ -1,7 +1,7 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
   LayoutDashboard, Search, GitCompare, Briefcase, Filter, BarChart3,
-  History, FlaskConical, Trophy, Settings, Activity, Menu, X,
+  History, FlaskConical, Trophy, Settings, Activity, Menu, X, BookOpen,
   TrendingUp, TrendingDown, Minus, Bell,
 } from "lucide-react";
 import { useState, useEffect, type ReactNode } from "react";
@@ -18,6 +18,7 @@ const NAV = [
   { to: "/backtest", label: "Backtesting", icon: History },
   { to: "/research-desk", label: "Research Desk", icon: FlaskConical },
   { to: "/returns-historical", label: "Returns Historical", icon: BarChart3 },
+  { to: "/methodology", label: "Methodology", icon: BookOpen },
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
