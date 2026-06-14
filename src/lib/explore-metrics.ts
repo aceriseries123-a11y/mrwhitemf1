@@ -145,3 +145,33 @@ export function computeReturnScore(
 
   return { shortTermScore, longTermScore, returnScore };
 }
+
+// ─── Ranking Score ─────────────────────────────────────────────────────────────
+//
+// Rankings page composite — combines the three scoring dimensions:
+//   Engine Score (7-pillar fundamental quality)   50%
+//   Return Score  (trailing returns ST + LT)       30%
+//   Explore Score (ratio-based quality metrics)    20%
+//
+// Uses available weights only (graceful degradation when a score is null).
+// Requires at least Engine Score to produce a result.
+
+export function computeRankingScore(
+  engineFinalScore: number | null,
+  returnScore:      number | null,
+  exploreScore:     number | null,
+): number | null {
+  const ENGINE_W  = 0.50;
+  const RETURN_W  = 0.30;
+  const EXPLORE_W = 0.20;
+
+  let score  = 0;
+  let totalW = 0;
+
+  if (engineFinalScore != null) { score += engineFinalScore * ENGINE_W;  totalW += ENGINE_W; }
+  if (returnScore      != null) { score += returnScore      * RETURN_W;  totalW += RETURN_W; }
+  if (exploreScore     != null) { score += exploreScore     * EXPLORE_W; totalW += EXPLORE_W; }
+
+  if (totalW < ENGINE_W) return null; // Engine Score is mandatory
+  return Math.round(score / totalW);
+}
