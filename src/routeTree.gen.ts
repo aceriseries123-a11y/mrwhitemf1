@@ -19,6 +19,7 @@ import { Route as ExplorerRouteImport } from './routes/explorer'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as CompareRouteImport } from './routes/compare'
 import { Route as ReturnsHistoricalRouteImport } from './routes/returns-historical'
+import { Route as MethodologyRouteImport } from './routes/methodology'
 import { Route as BacktestRouteImport } from './routes/backtest'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as FundIdRouteImport } from './routes/fund.$id'
@@ -75,6 +76,11 @@ const CompareRoute = CompareRouteImport.update({
 const ReturnsHistoricalRoute = ReturnsHistoricalRouteImport.update({
   id: '/returns-historical',
   path: '/returns-historical',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MethodologyRoute = MethodologyRouteImport.update({
+  id: '/methodology',
+  path: '/methodology',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BacktestRoute = BacktestRouteImport.update({
@@ -366,6 +372,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   ReturnsHistoricalRoute,
+  MethodologyRoute,
   IndexRoute: IndexRoute,
   BacktestRoute: BacktestRoute,
   CompareRoute: CompareRoute,
