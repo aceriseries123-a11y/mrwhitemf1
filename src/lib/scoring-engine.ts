@@ -335,9 +335,14 @@ export interface EngineMetrics {
   consistencyBeatRate: number | null;
 
   // Pillar 2 — Short-Term Performance
+  ret1w: number | null;
   ret1m: number | null;
   ret3m: number | null;
   ret6m: number | null;
+  ret1y: number | null;
+
+  /** Average of all available 1-year rolling returns (simple, not CAGR). */
+  annualReturnAvg: number | null;
 
   // Pillar 3 — Risk-Adjusted (Sortino 10, Sharpe 6, IR 4)
   sharpe:           number | null;
@@ -376,6 +381,22 @@ export interface EngineMetrics {
 
   historyYears: number;
   dataPoints:   number;
+}
+
+// ─── Annual Return Average helper ────────────────────────────────────────────
+// Average of all available 1-year rolling simple returns.
+// Samples up to 200 windows across the full series for performance.
+
+function computeAnnualReturnAvg(series: NavPoint[]): number | null {
+  if (series.length < 252) return null;
+  const step = Math.max(1, Math.floor(series.length / 200));
+  const returns: number[] = [];
+  for (let i = 252; i < series.length; i += step) {
+    const r = series[i].nav / series[i - 252].nav - 1;
+    if (isFinite(r)) returns.push(r);
+  }
+  if (returns.length === 0) return null;
+  return returns.reduce((a, b) => a + b, 0) / returns.length;
 }
 
 // ─── Compute metrics for one fund ────────────────────────────────────────────
@@ -418,9 +439,12 @@ export function computeEngineMetrics(
     cagr10y: trailingCAGR(series, 10),
     consistencyBeatRate,
 
+    ret1w: trailingCAGR(series, 1 / 52),
     ret1m: trailingCAGR(series, 1 / 12),
     ret3m: trailingCAGR(series, 3 / 12),
     ret6m: trailingCAGR(series, 6 / 12),
+    ret1y: trailingCAGR(series, 1),
+    annualReturnAvg: computeAnnualReturnAvg(series),
 
     sharpe,
     sortino,
