@@ -1,17 +1,30 @@
+/**
+ * explorer.tsx — Fund Explorer with all ratio columns + Explore Score.
+ *
+ * Columns: # · Fund · Category · Explore Score · NAV · Fund Size ·
+ *          Annual Ret Avg · Beta · Std Dev · Alpha · Sharpe · Sortino ·
+ *          Upside Cap · Downside Cap · Info Ratio · Risk Adj Ret
+ *
+ * Reads from fund-store (populated by Dashboard).
+ * Falls back to AMFI scheme list (NAV only) if Dashboard hasn't run yet.
+ */
+
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 import { useMemo, useState, useEffect } from "react";
-import { AlertCircle, Loader2, Search, X, DatabaseZap } from "lucide-react";
-import { useAMFISchemes, filterActiveSchemes, type AMFIScheme } from "@/lib/live-data";
-import { classifyAMFICategory, QUANTFUND_CATEGORIES, type QuantFundCategory } from "@/lib/categories";
+import { Search, X, ChevronUp, ChevronDown, ChevronsUpDown, DatabaseZap } from "lucide-react";
+import { fmtPct, fmtNum } from "@/lib/format";
+import { getFullRankedList, subscribeToRankedList, type RankedFund } from "@/lib/fund-store";
+import { QUANTFUND_CATEGORIES, type QuantFundCategory } from "@/lib/categories";
+import { computeExploreScore, computeRiskAdjReturn } from "@/lib/explore-metrics";
 
 export const Route = createFileRoute("/explorer")({
   head: () => ({
     meta: [
       { title: "Fund Explorer — QuantFund" },
-      { name: "description", content: "Search and filter the full Indian mutual fund universe by AMC, category and live AMFI NAV." },
+      { name: "description", content: "Explore Indian mutual funds by all key ratios — Sharpe, Sortino, Alpha, Information Ratio, capture ratios and the Explore Score." },
       { property: "og:title", content: "Fund Explorer — QuantFund" },
-      { property: "og:description", content: "Browse every active Indian mutual fund scheme with live AMFI NAV data." },
+      { property: "og:description", content: "Full-ratio fund explorer with category-relative Explore Score." },
       { property: "og:url", content: "https://mrwhitemf1.lovable.app/explorer" },
     ],
     links: [{ rel: "canonical", href: "https://mrwhitemf1.lovable.app/explorer" }],
@@ -19,262 +32,271 @@ export const Route = createFileRoute("/explorer")({
   component: Explorer,
 });
 
-type Row = AMFIScheme & { qfCategory: QuantFundCategory; hay: string };
-type SortField = "name" | "category" | "amc" | "nav" | "date";
+const ALL_CATEGORIES: Array<"All" | QuantFundCategory> = [
+  "All",
+  ...(QUANTFUND_CATEGORIES.filter(c => c !== "Unknown") as QuantFundCategory[]),
+];
+
+type SortKey =
+  | "schemeName" | "poolCategory" | "exploreScore" | "nav" | "annualReturnAvg"
+  | "beta" | "stdDev" | "jensensAlpha" | "sharpe" | "sortino"
+  | "upsideCapture" | "downsideCapture" | "informationRatio" | "riskAdjReturn";
 type SortDir = "asc" | "desc";
 
-const PAGE_SIZE = 100;
+function tone(v: number | null) {
+  if (v == null) return "text-muted-foreground";
+  return v >= 0 ? "text-positive" : "text-negative";
+}
 
-function useDebounce<T>(value: T, delay: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(value), delay);
-    return () => clearTimeout(t);
-  }, [value, delay]);
-  return debounced;
+function SortTh({
+  label, k, sortKey, sortDir, onSort, right = true, title: titleAttr,
+}: {
+  label: string; k: SortKey; sortKey: SortKey; sortDir: SortDir;
+  onSort: (k: SortKey) => void; right?: boolean; title?: string;
+}) {
+  const active = sortKey === k;
+  return (
+    <th className={`p-3 font-medium whitespace-nowrap ${right ? "text-right" : ""}`} title={titleAttr}>
+      <button
+        onClick={() => onSort(k)}
+        className={`inline-flex items-center gap-0.5 transition-colors ${active ? "text-cyan" : "text-muted-foreground hover:text-foreground"}`}
+      >
+        {label}
+        {active
+          ? sortDir === "desc" ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />
+          : <ChevronsUpDown className="h-3 w-3 opacity-40" />}
+      </button>
+    </th>
+  );
 }
 
 function Explorer() {
-  const { data: allSchemes, isLoading, isError, error } = useAMFISchemes();
-  const [query, setQuery] = useState("");
-  const [category, setCategory] = useState<"All" | QuantFundCategory>("All");
-  const [sortField, setSortField] = useState<SortField>("name");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
-  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<"All" | QuantFundCategory>("All");
+  const [sortKey, setSortKey] = useState<SortKey>("exploreScore");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
 
-  // Debounce text search so heavy filtering only fires after user pauses
-  const debouncedQuery = useDebounce(query, 150);
+  const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
+  useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
 
-  // Pre-build enriched rows (including lowercase search string) once when
-  // schemes load — this work is never repeated on filter/sort changes.
-  const enriched: Row[] = useMemo(() => {
-    if (!allSchemes) return [];
-    return filterActiveSchemes(allSchemes).map((s) => ({
-      ...s,
-      qfCategory: classifyAMFICategory(s.category),
-      hay: `${s.schemeName} ${s.amc} ${s.schemeCode}`.toLowerCase(),
-    }));
-  }, [allSchemes]);
+  const hasData = allRanked.length > 0;
 
-  // Filter + sort — separated from page so page reset doesn't cause double render
-  const view = useMemo(() => {
-    const terms = debouncedQuery.toLowerCase().split(/\s+/).filter(Boolean);
-    const filtered = enriched.filter((s) => {
-      if (category !== "All" && s.qfCategory !== category) return false;
-      if (terms.length === 0) return true;
-      return terms.every((t) => s.hay.includes(t));
-    });
-    const dir = sortDir === "asc" ? 1 : -1;
-    return filtered.sort((a, b) => {
-      const va = pick(a, sortField);
-      const vb = pick(b, sortField);
-      if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
-      return String(va).localeCompare(String(vb)) * dir;
-    });
-  }, [enriched, debouncedQuery, category, sortField, sortDir]);
+  const categoryPeersMap = useMemo(() => {
+    const map = new Map<string, RankedFund[]>();
+    for (const f of allRanked) {
+      const arr = map.get(f.poolCategory) ?? [];
+      arr.push(f);
+      map.set(f.poolCategory, arr);
+    }
+    return map;
+  }, [allRanked]);
 
-  // Reset to page 1 when filters/sort change — done in useEffect, not inside useMemo
-  useEffect(() => { setPage(1); }, [view]);
+  const rows = useMemo(() => allRanked.map(f => {
+    const peers = (categoryPeersMap.get(f.poolCategory) ?? []).map(p => p.metrics);
+    const exploreScore = computeExploreScore(f.metrics, peers);
+    const riskAdjReturn = computeRiskAdjReturn(f.metrics);
+    return { ...f, exploreScore, riskAdjReturn };
+  }), [allRanked, categoryPeersMap]);
 
-  const totalPages = Math.ceil(view.length / PAGE_SIZE);
-  const pageRows = view.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
-  const toggleSort = (f: SortField) => {
-    if (sortField === f) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortField(f); setSortDir(f === "nav" ? "desc" : "asc"); }
+  const toggleSort = (k: SortKey) => {
+    if (sortKey === k) setSortDir(d => d === "desc" ? "asc" : "desc");
+    else { setSortKey(k); setSortDir("desc"); }
   };
 
-  if (isLoading) {
-    return (
-      <AppShell title="Fund Explorer">
-        <div className="flex flex-col items-center gap-3 py-24 text-muted-foreground">
-          <Loader2 className="h-5 w-5 animate-spin text-cyan" />
-          <p className="font-mono text-[11px] uppercase tracking-widest">Loading AMFI scheme universe…</p>
-        </div>
-      </AppShell>
-    );
-  }
-
-  if (isError) {
-    return (
-      <AppShell title="Fund Explorer">
-        <div className="flex items-start gap-4 rounded-xl border border-negative/40 bg-negative/10 p-6">
-          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-negative" />
-          <div>
-            <p className="mb-1 font-display text-sm font-semibold uppercase tracking-widest text-negative">AMFI data unavailable</p>
-            <p className="text-sm text-muted-foreground">{(error as Error)?.message ?? "Unknown error"}</p>
-          </div>
-        </div>
-      </AppShell>
-    );
-  }
+  const displayed = useMemo(() => {
+    let list = rows;
+    if (categoryFilter !== "All") list = list.filter(f => f.poolCategory === categoryFilter);
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(f =>
+        f.schemeName.toLowerCase().includes(q) || f.amc.toLowerCase().includes(q),
+      );
+    }
+    return [...list].sort((a, b) => {
+      const dir = sortDir === "desc" ? -1 : 1;
+      if (sortKey === "schemeName") return dir * a.schemeName.localeCompare(b.schemeName);
+      if (sortKey === "poolCategory") return dir * (a.poolCategory as string).localeCompare(b.poolCategory as string);
+      const getVal = (r: typeof a): number | null => {
+        const m = r.metrics;
+        switch (sortKey) {
+          case "exploreScore":    return r.exploreScore;
+          case "nav":             return r.nav;
+          case "annualReturnAvg": return m.annualReturnAvg;
+          case "beta":            return m.beta;
+          case "stdDev":          return m.stdDev;
+          case "jensensAlpha":    return m.jensensAlpha;
+          case "sharpe":          return m.sharpe;
+          case "sortino":         return m.sortino;
+          case "upsideCapture":   return m.upsideCapture;
+          case "downsideCapture": return m.downsideCapture;
+          case "informationRatio":return m.informationRatio;
+          case "riskAdjReturn":   return r.riskAdjReturn;
+          default: return null;
+        }
+      };
+      const va = getVal(a);
+      const vb = getVal(b);
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      return dir * (va - vb);
+    });
+  }, [rows, categoryFilter, search, sortKey, sortDir]);
 
   return (
     <AppShell title="Fund Explorer">
-      <div className="mx-auto max-w-6xl space-y-4">
+      <div className="mx-auto max-w-[1800px] space-y-5">
 
         {/* Header */}
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="font-display text-2xl font-bold tracking-tight">Fund Explorer</h1>
-            <p className="mt-1 font-mono text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              {enriched.length.toLocaleString()} active open-ended schemes · Live AMFI NAV
+            <div className="flex items-center gap-2.5">
+              <Search className="h-5 w-5 text-cyan" />
+              <h1 className="font-display text-2xl font-bold tracking-tight">Fund Explorer</h1>
+            </div>
+            <p className="mt-1 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
+              All ratios · Explore Score · Category-relative · {hasData ? `${allRanked.length.toLocaleString()} funds` : "Load Dashboard first"}
             </p>
           </div>
-          <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-            {view.length.toLocaleString()} matching
-          </span>
         </div>
 
-        {/* Search + filter bar */}
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface p-3">
-          <div className="relative min-w-[220px] flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        {/* Info strip */}
+        <div className="flex items-start gap-2 rounded-xl border border-cyan/20 bg-cyan/[0.04] px-4 py-3 text-xs text-muted-foreground">
+          <DatabaseZap className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan" />
+          <div>
+            <span className="font-bold text-foreground">Explore Score</span> = category-relative composite of Sharpe 20% · Sortino 15% · Jensen's Alpha 15% · Info Ratio 15% · Risk-Adj Return 15% · Upside Capture 10% · Downside Capture 10%.
+            {" "}All ratio cells show actual values (not percentiles). Percentile ranking happens only inside the Explore Score.
+            {!hasData && <span className="ml-2 text-warning"> Visit Dashboard to load fund data.</span>}
+          </div>
+        </div>
+
+        {/* Controls */}
+        <div className="flex flex-wrap gap-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground pointer-events-none" />
             <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search by scheme, AMC or code…"
-              autoComplete="off"
-              spellCheck={false}
-              className="w-full rounded-lg border border-border bg-background px-9 py-2 text-sm outline-none transition-colors focus:border-cyan focus:ring-1 focus:ring-cyan/20"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search fund or AMC…"
+              className="w-60 rounded-lg border border-border bg-surface py-2 pl-8 pr-8 font-mono text-[12px] text-foreground placeholder:text-muted-foreground focus:border-cyan/60 focus:outline-none"
             />
-            {query && (
-              <button onClick={() => setQuery("")} aria-label="Clear search"
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground">
-                <X className="h-3.5 w-3.5" />
+            {search && (
+              <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                <X className="h-3 w-3" />
               </button>
             )}
           </div>
           <select
-            value={category}
-            onChange={(e) => setCategory(e.target.value as "All" | QuantFundCategory)}
-            className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-cyan"
+            value={categoryFilter}
+            onChange={e => setCategoryFilter(e.target.value as "All" | QuantFundCategory)}
+            className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus:border-cyan/60 focus:outline-none"
           >
-            <option value="All">All Categories</option>
-            {QUANTFUND_CATEGORIES.filter((c) => c !== "Unknown").map((c) => (
-              <option key={c} value={c}>{c}</option>
+            {ALL_CATEGORIES.map(c => (
+              <option key={c} value={c}>
+                {c}{c !== "All" ? ` (${allRanked.filter(f => f.poolCategory === c).length})` : ""}
+              </option>
             ))}
           </select>
-        </div>
-
-        {/* Info strip */}
-        <div className="flex items-center gap-2 rounded-xl border border-cyan/20 bg-cyan/[0.04] px-4 py-2.5 text-xs text-muted-foreground">
-          <DatabaseZap className="h-3.5 w-3.5 shrink-0 text-cyan" />
-          Showing verified AMFI fields: scheme name, category, AMC and latest NAV.
-          Full risk metrics (Sharpe, Sortino, drawdown, CAGR) are computed from NAV history —
-          click any scheme to open the <span className="text-cyan">Fund Detail</span> page.
+          <span className="flex items-center rounded-lg border border-border bg-surface px-3 py-2 font-mono text-[10px] text-muted-foreground">
+            {displayed.length.toLocaleString()} funds
+          </span>
         </div>
 
         {/* Table */}
-        <div className="overflow-hidden rounded-xl border border-border bg-surface">
+        <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[700px] text-sm">
-              <thead>
-                <tr className="border-b border-border bg-background/80 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-                  <Th label="Scheme" field="name" sortField={sortField} sortDir={sortDir} onClick={toggleSort} />
-                  <Th label="Category" field="category" sortField={sortField} sortDir={sortDir} onClick={toggleSort} />
-                  <Th label="AMC" field="amc" sortField={sortField} sortDir={sortDir} onClick={toggleSort} />
-                  <Th label="NAV ₹" field="nav" sortField={sortField} sortDir={sortDir} onClick={toggleSort} right />
-                  <Th label="As of" field="date" sortField={sortField} sortDir={sortDir} onClick={toggleSort} right />
+            <table className="w-full min-w-[1800px] text-left">
+              <thead className="sticky top-0 z-10">
+                <tr className="border-b border-border bg-background/95 font-mono text-[9px] uppercase tracking-widest text-muted-foreground backdrop-blur">
+                  <th className="w-10 p-3 text-center font-medium">#</th>
+                  <SortTh label="Fund" k="schemeName" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} right={false} />
+                  <SortTh label="Category" k="poolCategory" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} right={false} />
+                  <SortTh label="Explore Score" k="exploreScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="7-component ratio score, category-relative (0–100)" />
+                  <SortTh label="NAV ₹" k="nav" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Latest NAV from AMFI" />
+                  <th className="p-3 text-right font-medium whitespace-nowrap text-muted-foreground">Fund Size</th>
+                  <SortTh label="Ann Ret Avg" k="annualReturnAvg" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Average of all 1-year rolling returns" />
+                  <SortTh label="Beta" k="beta" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Sensitivity to category benchmark" />
+                  <SortTh label="Std Dev" k="stdDev" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Annualised daily return volatility" />
+                  <SortTh label="Alpha" k="jensensAlpha" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Jensen's Alpha — beta-adjusted excess return" />
+                  <SortTh label="Sharpe" k="sharpe" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="(Return - RFR) / Std Dev" />
+                  <SortTh label="Sortino" k="sortino" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="(Return - RFR) / Downside Std Dev" />
+                  <SortTh label="Upside Cap" k="upsideCapture" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="% of benchmark upside captured" />
+                  <SortTh label="Downside Cap" k="downsideCapture" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="% of benchmark downside captured (lower=better)" />
+                  <SortTh label="Info Ratio" k="informationRatio" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Excess return / Tracking Error" />
+                  <SortTh label="Risk Adj Ret" k="riskAdjReturn" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Annual Return Avg / Std Dev" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
-                {pageRows.length === 0 ? (
+                {displayed.length === 0 ? (
                   <tr>
-                    <td colSpan={5}>
-                      <EmptyState query={query} category={category} onClear={() => { setQuery(""); setCategory("All"); }} />
+                    <td colSpan={16} className="py-16 text-center font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
+                      {hasData ? "No funds match" : "Visit Dashboard first to load fund data"}
                     </td>
                   </tr>
-                ) : (
-                  pageRows.map((s) => (
-                    <tr key={s.schemeCode} className="group transition-colors hover:bg-cyan/[0.04]">
-                      <td className="px-4 py-2.5 max-w-[320px]">
-                        <Link to="/fund/$id" params={{ id: s.schemeCode }}
-                          className="font-medium text-foreground transition-colors hover:text-cyan line-clamp-2">
-                          {s.schemeName}
+                ) : displayed.map((f, idx) => {
+                  const m = f.metrics;
+                  return (
+                    <tr key={f.schemeCode} className="transition-colors hover:bg-cyan/[0.04]">
+                      <td className="p-3 text-center font-mono text-[10px] tabular-nums text-muted-foreground">{idx + 1}</td>
+                      <td className="p-3 max-w-[220px]">
+                        <Link
+                          to="/fund/$id"
+                          params={{ id: f.schemeCode }}
+                          className="block text-[12px] font-semibold leading-snug text-foreground transition-colors hover:text-cyan"
+                        >
+                          {f.schemeName}
                         </Link>
-                        <div className="mt-0.5 font-mono text-[9px] text-muted-foreground">#{s.schemeCode}</div>
+                        <p className="mt-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">{f.amc}</p>
                       </td>
-                      <td className="px-4 py-2.5 whitespace-nowrap text-sm text-muted-foreground">{s.qfCategory}</td>
-                      <td className="px-4 py-2.5 whitespace-nowrap text-sm text-muted-foreground">{s.amc}</td>
-                      <td className="px-4 py-2.5 text-right font-mono tabular-nums text-sm">{s.nav.toFixed(2)}</td>
-                      <td className="px-4 py-2.5 text-right font-mono text-[11px] tabular-nums text-muted-foreground whitespace-nowrap">
-                        {s.date || "—"}
+                      <td className="p-3">
+                        <span className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-[8px] uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                          {f.poolCategory}
+                        </span>
                       </td>
+                      {/* Explore Score */}
+                      <td className="p-3 text-right">
+                        {f.exploreScore != null ? (
+                          <div className="inline-flex flex-col items-end gap-0.5">
+                            <span className="font-mono text-[13px] font-bold tabular-nums text-cyan">{fmtNum(f.exploreScore, 1)}</span>
+                            <div className="h-1 w-10 overflow-hidden rounded-full bg-border">
+                              <div className="h-full rounded-full bg-cyan" style={{ width: `${Math.min(100, f.exploreScore)}%` }} />
+                            </div>
+                          </div>
+                        ) : <span className="font-mono text-[10px] text-muted-foreground">—</span>}
+                      </td>
+                      <td className="p-3 text-right font-mono text-[11px] tabular-nums text-foreground">₹{f.nav.toFixed(2)}</td>
+                      <td className="p-3 text-right font-mono text-[10px] text-muted-foreground">—</td>
+                      <td className={`p-3 text-right font-mono text-[11px] font-bold tabular-nums ${tone(m.annualReturnAvg)}`}>
+                        {fmtPct(m.annualReturnAvg, { signed: true })}
+                      </td>
+                      <td className="p-3 text-right font-mono text-[11px] tabular-nums text-foreground">{fmtNum(m.beta, 2)}</td>
+                      <td className="p-3 text-right font-mono text-[11px] tabular-nums text-foreground">{fmtNum(m.stdDev, 4)}</td>
+                      <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(m.jensensAlpha)}`}>{fmtNum(m.jensensAlpha, 4)}</td>
+                      <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(m.sharpe)}`}>{fmtNum(m.sharpe, 2)}</td>
+                      <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(m.sortino)}`}>{fmtNum(m.sortino, 2)}</td>
+                      <td className="p-3 text-right font-mono text-[11px] tabular-nums text-foreground">{fmtPct(m.upsideCapture)}</td>
+                      <td className="p-3 text-right font-mono text-[11px] tabular-nums text-foreground">{fmtPct(m.downsideCapture)}</td>
+                      <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(m.informationRatio)}`}>{fmtNum(m.informationRatio, 2)}</td>
+                      <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(f.riskAdjReturn)}`}>{fmtNum(f.riskAdjReturn, 2)}</td>
                     </tr>
-                  ))
-                )}
+                  );
+                })}
               </tbody>
             </table>
           </div>
-
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between border-t border-border px-4 py-3">
-              <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                Page {page} of {totalPages} · {view.length.toLocaleString()} schemes
-              </span>
-              <div className="flex gap-2">
-                <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
-                  className="rounded-lg border border-border bg-surface px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground disabled:opacity-40 hover:text-foreground">
-                  ← Prev
-                </button>
-                <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}
-                  className="rounded-lg border border-border bg-surface px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground disabled:opacity-40 hover:text-foreground">
-                  Next →
-                </button>
-              </div>
-            </div>
-          )}
+          <div className="border-t border-border bg-background/40 px-4 py-2.5">
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+              {displayed.length.toLocaleString()} funds · Scroll right for all ratio columns
+            </span>
+          </div>
         </div>
-      </div>
-    </AppShell>
-  );
-}
 
-function EmptyState({ query, category, onClear }: { query: string; category: string; onClear: () => void }) {
-  return (
-    <div className="flex flex-col items-center gap-4 py-16 text-center">
-      <div className="grid h-12 w-12 place-items-center rounded-xl border border-border bg-surface">
-        <Search className="h-5 w-5 text-muted-foreground" />
-      </div>
-      <div>
-        <p className="text-sm font-medium text-foreground">No schemes match your filters</p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {query && <span>Search: "<span className="text-foreground">{query}</span>"</span>}
-          {query && category !== "All" && " · "}
-          {category !== "All" && <span>Category: <span className="text-foreground">{category}</span></span>}
+        <p className="text-[10px] leading-relaxed text-muted-foreground">
+          All metrics computed from real NAV history via mfapi.in · Ann Ret Avg = average of rolling 1Y simple returns ·
+          Beta and capture ratios require benchmark data (category average NAV series) ·
+          Risk Adj Ret = Ann Ret Avg ÷ Std Dev · Explore Score requires at least Sharpe Ratio data.
         </p>
       </div>
-      <button onClick={onClear}
-        className="rounded-lg border border-border bg-surface px-4 py-2 text-xs text-muted-foreground transition-colors hover:border-cyan/40 hover:text-foreground">
-        Clear all filters
-      </button>
-    </div>
-  );
-}
-
-function pick(r: Row, f: SortField): number | string {
-  switch (f) {
-    case "name": return r.schemeName;
-    case "category": return r.qfCategory;
-    case "amc": return r.amc;
-    case "nav": return r.nav;
-    case "date": return r.date;
-  }
-}
-
-function Th({ label, field, sortField, sortDir, onClick, right }: {
-  label: string; field: SortField; sortField: SortField; sortDir: SortDir;
-  onClick: (f: SortField) => void; right?: boolean;
-}) {
-  const active = sortField === field;
-  return (
-    <th className={`px-4 py-3 ${right ? "text-right" : "text-left"} font-medium whitespace-nowrap`}>
-      <button onClick={() => onClick(field)}
-        className={`transition-colors ${active ? "text-cyan" : "hover:text-foreground"}`}>
-        {label}{active ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
-      </button>
-    </th>
+    </AppShell>
   );
 }
