@@ -18,6 +18,7 @@ import { Route as PortfolioRouteImport } from './routes/portfolio'
 import { Route as ExplorerRouteImport } from './routes/explorer'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as CompareRouteImport } from './routes/compare'
+import { Route as ReturnsHistoricalRouteImport } from './routes/returns-historical'
 import { Route as BacktestRouteImport } from './routes/backtest'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as FundIdRouteImport } from './routes/fund.$id'
@@ -71,6 +72,11 @@ const CompareRoute = CompareRouteImport.update({
   path: '/compare',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ReturnsHistoricalRoute = ReturnsHistoricalRouteImport.update({
+  id: '/returns-historical',
+  path: '/returns-historical',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BacktestRoute = BacktestRouteImport.update({
   id: '/backtest',
   path: '/backtest',
@@ -109,6 +115,7 @@ const ApiPublicNavBatchRoute = ApiPublicNavBatchRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/returns-historical': typeof ReturnsHistoricalRoute
   '/backtest': typeof BacktestRoute
   '/compare': typeof CompareRoute
   '/dashboard': typeof DashboardRoute
@@ -127,6 +134,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/returns-historical': typeof ReturnsHistoricalRoute
   '/backtest': typeof BacktestRoute
   '/compare': typeof CompareRoute
   '/dashboard': typeof DashboardRoute
@@ -146,6 +154,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/returns-historical': typeof ReturnsHistoricalRoute
   '/backtest': typeof BacktestRoute
   '/compare': typeof CompareRoute
   '/dashboard': typeof DashboardRoute
@@ -356,6 +365,7 @@ declare module '@tanstack/react-router' {
 }
 
 const rootRouteChildren: RootRouteChildren = {
+  ReturnsHistoricalRoute,
   IndexRoute: IndexRoute,
   BacktestRoute: BacktestRoute,
   CompareRoute: CompareRoute,
