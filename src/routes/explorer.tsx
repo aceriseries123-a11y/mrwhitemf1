@@ -1,102 +1,131 @@
 /**
- * explorer.tsx — Fund Explorer with all ratio columns + Explore Score.
+ * explorer.tsx — Fund Explorer (Ratios & Factors)
  *
- * Columns: # · Fund · Category · Explore Score · NAV · Fund Size ·
- *          Annual Ret Avg · Beta · Std Dev · Alpha · Sharpe · Sortino ·
- *          Upside Cap · Downside Cap · Info Ratio · Risk Adj Ret
+ * Columns:  Sno · Fund · Category · Explore Score · Expense Ratio ·
+ *           Beta · Std Dev · Alpha · Sharpe · Sortino · Upside Cap ·
+ *           Downside Cap · Info Ratio · Risk-Adj Ret
  *
- * Reads from fund-store (populated by Dashboard).
- * Falls back to AMFI scheme list (NAV only) if Dashboard hasn't run yet.
+ * Upside Capture shown as "+X.X%" (positive) — how much of benchmark upside captured.
+ * Downside Capture shown as "X.X%" colored red — how much benchmark downside captured
+ *   (lower = better, so green < 80%, red > 100%).
+ * Expense Ratio: not available from mfapi.in public feed — shown as "—".
  */
-
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { AppShell } from "@/components/AppShell";
 import { useMemo, useState, useEffect } from "react";
-import { Search, X, ChevronUp, ChevronDown, ChevronsUpDown, DatabaseZap } from "lucide-react";
-import { fmtPct, fmtNum } from "@/lib/format";
+import { BarChart2, ChevronUp, ChevronDown, ChevronsUpDown, Search, X } from "lucide-react";
+import { fmtNum, fmtPct } from "@/lib/format";
+import { AppShell } from "@/components/AppShell";
+import { DataSourceBadge } from "@/components/DataSourceBadge";
 import { getFullRankedList, subscribeToRankedList, type RankedFund } from "@/lib/fund-store";
-import { QUANTFUND_CATEGORIES, type QuantFundCategory } from "@/lib/categories";
+import { QUANTFUND_CATEGORIES, categoryColor, type QuantFundCategory } from "@/lib/categories";
 import { computeExploreScore, computeRiskAdjReturn } from "@/lib/explore-metrics";
+import { Link as RouterLink } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/explorer")({
   head: () => ({
     meta: [
-      { title: "Fund Explorer — QuantFund" },
-      { name: "description", content: "Explore Indian mutual funds by all key ratios — Sharpe, Sortino, Alpha, Information Ratio, capture ratios and the Explore Score." },
-      { property: "og:title", content: "Fund Explorer — QuantFund" },
-      { property: "og:description", content: "Full-ratio fund explorer with category-relative Explore Score." },
-      { property: "og:url", content: "https://mrwhitemf1.lovable.app/explorer" },
+      { title: "Explorer — QuantFund" },
+      { name: "description", content: "Fund Explorer — ratio-based quality metrics across all scored funds." },
     ],
-    links: [{ rel: "canonical", href: "https://mrwhitemf1.lovable.app/explorer" }],
   }),
-  component: Explorer,
+  component: FundExplorer,
 });
 
-const ALL_CATEGORIES: Array<"All" | QuantFundCategory> = [
-  "All",
-  ...(QUANTFUND_CATEGORIES.filter(c => c !== "Unknown") as QuantFundCategory[]),
+const ALL_CATS: Array<"All" | QuantFundCategory> = [
+  "All", ...(QUANTFUND_CATEGORIES.filter(c => c !== "Unknown") as QuantFundCategory[]),
 ];
 
-type SortKey =
-  | "schemeName" | "poolCategory" | "exploreScore" | "nav" | "annualReturnAvg"
+type SortKey = "schemeName" | "poolCategory" | "exploreScore" | "expenseRatio"
   | "beta" | "stdDev" | "jensensAlpha" | "sharpe" | "sortino"
   | "upsideCapture" | "downsideCapture" | "informationRatio" | "riskAdjReturn";
 type SortDir = "asc" | "desc";
 
-function tone(v: number | null) {
-  if (v == null) return "text-muted-foreground";
-  return v >= 0 ? "text-positive" : "text-negative";
+function CategoryBadge({ cat }: { cat: string }) {
+  const color = categoryColor(cat);
+  return (
+    <span style={{ backgroundColor: color + "22", borderColor: color + "66", color }}
+      className="rounded-md border px-2 py-0.5 font-mono text-[8px] uppercase tracking-wider whitespace-nowrap font-semibold">
+      {cat}
+    </span>
+  );
 }
 
-function SortTh({
-  label, k, sortKey, sortDir, onSort, right = true, title: titleAttr,
-}: {
+function SortTh({ label, k, sortKey, sortDir, onSort, title: titleAttr, accent }: {
   label: string; k: SortKey; sortKey: SortKey; sortDir: SortDir;
-  onSort: (k: SortKey) => void; right?: boolean; title?: string;
+  onSort: (k: SortKey) => void; title?: string; accent?: boolean;
 }) {
   const active = sortKey === k;
   return (
-    <th className={`p-3 font-medium whitespace-nowrap ${right ? "text-right" : ""}`} title={titleAttr}>
-      <button
-        onClick={() => onSort(k)}
-        className={`inline-flex items-center gap-0.5 transition-colors ${active ? "text-cyan" : "text-muted-foreground hover:text-foreground"}`}
-      >
+    <th className="p-3 text-right font-medium whitespace-nowrap" title={titleAttr}>
+      <button onClick={() => onSort(k)}
+        className={`inline-flex items-center gap-0.5 transition-colors ${active ? "text-cyan" : accent ? "text-foreground/80 hover:text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
         {label}
-        {active
-          ? sortDir === "desc" ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />
+        {active ? sortDir === "desc" ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />
           : <ChevronsUpDown className="h-3 w-3 opacity-40" />}
       </button>
     </th>
   );
 }
 
-function Explorer() {
+function RatioCell({ v, pct, lowerBetter = false }: { v: number | null; pct?: boolean; lowerBetter?: boolean }) {
+  if (v == null) return <span className="font-mono text-[10px] text-muted-foreground">—</span>;
+  const color = lowerBetter
+    ? (v <= 0 ? "text-positive" : v <= 80 ? "text-positive" : v <= 100 ? "text-warning" : "text-negative")
+    : (v >= 1 ? "text-positive" : v >= 0 ? "text-foreground" : "text-negative");
+  return (
+    <span className={`font-mono text-[11px] tabular-nums ${color}`}>
+      {pct ? `${v.toFixed(2)}` : fmtNum(v, 2)}
+    </span>
+  );
+}
+
+function UpCaptureCell({ v }: { v: number | null }) {
+  if (v == null) return <span className="font-mono text-[10px] text-muted-foreground">—</span>;
+  const color = v >= 100 ? "text-positive" : v >= 85 ? "text-foreground" : "text-negative";
+  return <span className={`font-mono text-[11px] tabular-nums font-semibold ${color}`}>+{v.toFixed(1)}%</span>;
+}
+
+function DnCaptureCell({ v }: { v: number | null }) {
+  if (v == null) return <span className="font-mono text-[10px] text-muted-foreground">—</span>;
+  // Lower is better: < 80% green, 80-100% warning, > 100% red
+  const color = v <= 80 ? "text-positive" : v <= 100 ? "text-warning" : "text-negative";
+  return <span className={`font-mono text-[11px] tabular-nums font-semibold ${color}`}>{v.toFixed(1)}%</span>;
+}
+
+function ScoreCell({ v }: { v: number | null }) {
+  if (v == null) return <span className="font-mono text-[10px] text-muted-foreground">—</span>;
+  const color = v >= 75 ? "text-cyan font-bold" : v >= 50 ? "text-foreground font-semibold" : "text-muted-foreground";
+  return (
+    <div className="inline-flex flex-col items-end gap-0.5">
+      <span className={`font-mono text-[12px] tabular-nums ${color}`}>{fmtNum(v, 1)}</span>
+      <div className="h-1 w-10 overflow-hidden rounded-full bg-border">
+        <div className="h-full rounded-full bg-cyan" style={{ width: `${Math.min(100, v)}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function FundExplorer() {
   const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState<"All" | QuantFundCategory>("All");
+  const [catFilter, setCatFilter] = useState<"All" | QuantFundCategory>("All");
   const [sortKey, setSortKey] = useState<SortKey>("exploreScore");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
   useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
 
-  const hasData = allRanked.length > 0;
-
-  const categoryPeersMap = useMemo(() => {
+  const catPeersMap = useMemo(() => {
     const map = new Map<string, RankedFund[]>();
-    for (const f of allRanked) {
-      const arr = map.get(f.poolCategory) ?? [];
-      arr.push(f);
-      map.set(f.poolCategory, arr);
-    }
+    for (const f of allRanked) { const a = map.get(f.poolCategory) ?? []; a.push(f); map.set(f.poolCategory, a); }
     return map;
   }, [allRanked]);
 
-  const rows = useMemo(() => allRanked.map(f => {
-    const peers = (categoryPeersMap.get(f.poolCategory) ?? []).map(p => p.metrics);
+  const augmented = useMemo(() => allRanked.map(f => {
+    const peers = (catPeersMap.get(f.poolCategory) ?? []).map(p => p.metrics);
     const exploreScore = computeExploreScore(f.metrics, peers);
     const riskAdjReturn = computeRiskAdjReturn(f.metrics);
     return { ...f, exploreScore, riskAdjReturn };
-  }), [allRanked, categoryPeersMap]);
+  }), [allRanked, catPeersMap]);
 
   const toggleSort = (k: SortKey) => {
     if (sortKey === k) setSortDir(d => d === "desc" ? "asc" : "desc");
@@ -104,69 +133,66 @@ function Explorer() {
   };
 
   const displayed = useMemo(() => {
-    let list = rows;
-    if (categoryFilter !== "All") list = list.filter(f => f.poolCategory === categoryFilter);
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter(f =>
-        f.schemeName.toLowerCase().includes(q) || f.amc.toLowerCase().includes(q),
-      );
-    }
+    let list = augmented;
+    if (catFilter !== "All") list = list.filter(f => f.poolCategory === catFilter);
+    if (search.trim()) { const q = search.toLowerCase(); list = list.filter(f => f.schemeName.toLowerCase().includes(q) || f.amc.toLowerCase().includes(q)); }
     return [...list].sort((a, b) => {
       const dir = sortDir === "desc" ? -1 : 1;
       if (sortKey === "schemeName") return dir * a.schemeName.localeCompare(b.schemeName);
       if (sortKey === "poolCategory") return dir * (a.poolCategory as string).localeCompare(b.poolCategory as string);
-      const getVal = (r: typeof a): number | null => {
-        const m = r.metrics;
-        switch (sortKey) {
-          case "exploreScore":    return r.exploreScore;
-          case "nav":             return r.nav;
-          case "annualReturnAvg": return m.annualReturnAvg;
-          case "beta":            return m.beta;
-          case "stdDev":          return m.stdDev;
-          case "jensensAlpha":    return m.jensensAlpha;
-          case "sharpe":          return m.sharpe;
-          case "sortino":         return m.sortino;
-          case "upsideCapture":   return m.upsideCapture;
-          case "downsideCapture": return m.downsideCapture;
-          case "informationRatio":return m.informationRatio;
-          case "riskAdjReturn":   return r.riskAdjReturn;
-          default: return null;
-        }
+      const getV = (f: typeof a): number | null => {
+        if (sortKey === "exploreScore")      return f.exploreScore;
+        if (sortKey === "expenseRatio")      return null; // always null (no data)
+        if (sortKey === "beta")              return f.metrics.beta;
+        if (sortKey === "stdDev")            return f.metrics.stdDev;
+        if (sortKey === "jensensAlpha")      return f.metrics.jensensAlpha;
+        if (sortKey === "sharpe")            return f.metrics.sharpe;
+        if (sortKey === "sortino")           return f.metrics.sortino;
+        if (sortKey === "upsideCapture")     return f.metrics.upsideCapture;
+        if (sortKey === "downsideCapture")   return f.metrics.downsideCapture;
+        if (sortKey === "informationRatio")  return f.metrics.informationRatio;
+        if (sortKey === "riskAdjReturn")     return f.riskAdjReturn;
+        return null;
       };
-      const va = getVal(a);
-      const vb = getVal(b);
-      if (va == null && vb == null) return 0;
-      if (va == null) return 1;
-      if (vb == null) return -1;
+      const va = getV(a), vb = getV(b);
+      if (va == null && vb == null) return 0; if (va == null) return 1; if (vb == null) return -1;
       return dir * (va - vb);
     });
-  }, [rows, categoryFilter, search, sortKey, sortDir]);
+  }, [augmented, catFilter, search, sortKey, sortDir]);
+
+  if (allRanked.length === 0) return (
+    <AppShell title="Explorer">
+      <div className="mx-auto max-w-xl py-24 text-center">
+        <BarChart2 className="mx-auto mb-4 h-12 w-12 text-muted-foreground opacity-30" />
+        <h2 className="font-display text-lg font-bold text-foreground">No data yet</h2>
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Explorer reads from Dashboard. Visit Dashboard first to score all funds.</p>
+        <RouterLink to="/dashboard" className="mt-6 inline-flex items-center gap-2 rounded-xl bg-cyan px-6 py-2.5 font-mono text-[11px] font-bold uppercase tracking-widest text-background transition-opacity hover:opacity-90">
+          Load on Dashboard →
+        </RouterLink>
+      </div>
+    </AppShell>
+  );
 
   return (
-    <AppShell title="Fund Explorer">
-      <div className="mx-auto max-w-[1800px] space-y-5">
-
-        {/* Header */}
+    <AppShell title="Explorer">
+      <div className="mx-auto max-w-[1700px] space-y-5">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2.5">
-              <Search className="h-5 w-5 text-cyan" />
-              <h1 className="font-display text-2xl font-bold tracking-tight">Fund Explorer</h1>
-            </div>
+            <div className="flex items-center gap-2.5"><BarChart2 className="h-5 w-5 text-cyan" />
+              <h1 className="font-display text-2xl font-bold tracking-tight">Fund Explorer</h1></div>
             <p className="mt-1 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
-              All ratios · Explore Score · Category-relative · {hasData ? `${allRanked.length.toLocaleString()} funds` : "Load Dashboard first"}
+              {allRanked.length.toLocaleString()} funds · ratio & risk metrics · category-relative scoring
             </p>
           </div>
+          <DataSourceBadge />
         </div>
 
-        {/* Info strip */}
-        <div className="flex items-start gap-2 rounded-xl border border-cyan/20 bg-cyan/[0.04] px-4 py-3 text-xs text-muted-foreground">
-          <DatabaseZap className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan" />
-          <div>
-            <span className="font-bold text-foreground">Explore Score</span> = category-relative composite of Sharpe 20% · Sortino 15% · Jensen's Alpha 15% · Info Ratio 15% · Risk-Adj Return 15% · Upside Capture 10% · Downside Capture 10%.
-            {" "}All ratio cells show actual values (not percentiles). Percentile ranking happens only inside the Explore Score.
-            {!hasData && <span className="ml-2 text-warning"> Visit Dashboard to load fund data.</span>}
+        {/* Legend */}
+        <div className="rounded-xl border border-border bg-surface/60 px-4 py-3">
+          <div className="flex flex-wrap gap-x-6 gap-y-1 font-mono text-[9px] text-muted-foreground">
+            <span><span className="text-cyan font-bold">Explore Score</span> = Sharpe(20%)+Sortino(15%)+Alpha(15%)+IR(15%)+RAR(15%)+Upside(10%)+Downside(10%)</span>
+            <span><span className="text-positive">+Upside%</span> = how much of benchmark gain the fund captured · <span className="text-negative">Downside%</span> = benchmark loss captured (lower = better)</span>
+            <span><span className="text-foreground">Expense Ratio</span>: not available in public mfapi.in / AMFI feed — requires AMC-specific data</span>
           </div>
         </div>
 
@@ -174,128 +200,98 @@ function Explorer() {
         <div className="flex flex-wrap gap-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search fund or AMC…"
-              className="w-60 rounded-lg border border-border bg-surface py-2 pl-8 pr-8 font-mono text-[12px] text-foreground placeholder:text-muted-foreground focus:border-cyan/60 focus:outline-none"
-            />
-            {search && (
-              <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                <X className="h-3 w-3" />
-              </button>
-            )}
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search fund or AMC…"
+              className="w-60 rounded-lg border border-border bg-surface py-2 pl-8 pr-8 font-mono text-[12px] text-foreground placeholder:text-muted-foreground focus:border-cyan/60 focus:outline-none" />
+            {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"><X className="h-3 w-3" /></button>}
           </div>
-          <select
-            value={categoryFilter}
-            onChange={e => setCategoryFilter(e.target.value as "All" | QuantFundCategory)}
-            className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus:border-cyan/60 focus:outline-none"
-          >
-            {ALL_CATEGORIES.map(c => (
-              <option key={c} value={c}>
-                {c}{c !== "All" ? ` (${allRanked.filter(f => f.poolCategory === c).length})` : ""}
-              </option>
-            ))}
+          <select value={catFilter} onChange={e => setCatFilter(e.target.value as "All" | QuantFundCategory)}
+            className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus:border-cyan/60 focus:outline-none">
+            {ALL_CATS.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
-          <span className="flex items-center rounded-lg border border-border bg-surface px-3 py-2 font-mono text-[10px] text-muted-foreground">
-            {displayed.length.toLocaleString()} funds
-          </span>
+          <span className="flex items-center rounded-lg border border-border bg-surface px-3 py-2 font-mono text-[10px] text-muted-foreground">{displayed.length.toLocaleString()} funds</span>
         </div>
 
-        {/* Table */}
         <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1800px] text-left">
+            <table className="w-full min-w-[1600px] text-left">
               <thead className="sticky top-0 z-10">
                 <tr className="border-b border-border bg-background/95 font-mono text-[9px] uppercase tracking-widest text-muted-foreground backdrop-blur">
-                  <th className="w-10 p-3 text-center font-medium">#</th>
-                  <SortTh label="Fund" k="schemeName" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} right={false} />
-                  <SortTh label="Category" k="poolCategory" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} right={false} />
-                  <SortTh label="Explore Score" k="exploreScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="7-component ratio score, category-relative (0–100)" />
-                  <SortTh label="NAV ₹" k="nav" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Latest NAV from AMFI" />
-                  <th className="p-3 text-right font-medium whitespace-nowrap text-muted-foreground">Fund Size</th>
-                  <SortTh label="Ann Ret Avg" k="annualReturnAvg" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Average of all 1-year rolling returns" />
-                  <SortTh label="Beta" k="beta" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Sensitivity to category benchmark" />
-                  <SortTh label="Std Dev" k="stdDev" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Annualised daily return volatility" />
-                  <SortTh label="Alpha" k="jensensAlpha" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Jensen's Alpha — beta-adjusted excess return" />
-                  <SortTh label="Sharpe" k="sharpe" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="(Return - RFR) / Std Dev" />
-                  <SortTh label="Sortino" k="sortino" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="(Return - RFR) / Downside Std Dev" />
-                  <SortTh label="Upside Cap" k="upsideCapture" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="% of benchmark upside captured" />
-                  <SortTh label="Downside Cap" k="downsideCapture" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="% of benchmark downside captured (lower=better)" />
-                  <SortTh label="Info Ratio" k="informationRatio" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Excess return / Tracking Error" />
-                  <SortTh label="Risk Adj Ret" k="riskAdjReturn" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Annual Return Avg / Std Dev" />
+                  <th className="w-10 p-3 text-center font-medium">Sno</th>
+                  {/* Fund name — non-sortable header */}
+                  <th className="p-3 font-medium text-muted-foreground">Fund</th>
+                  <th className="p-3 font-medium text-muted-foreground">Category</th>
+                  <SortTh label="Explore Score" k="exploreScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} accent title="7-component ratio score 0-100 (category-relative)" />
+                  <SortTh label="Exp. Ratio" k="expenseRatio" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="TER — not in public feed" />
+                  <SortTh label="Beta" k="beta" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Market sensitivity vs category benchmark" />
+                  <SortTh label="Std Dev" k="stdDev" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Annualised volatility of daily returns" />
+                  <SortTh label="Alpha (J)" k="jensensAlpha" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Jensen's Alpha = fund 3Y CAGR − (RFR + β × (bm−RFR))" />
+                  <SortTh label="Sharpe" k="sharpe" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="(Return − RFR) / std dev · higher better" />
+                  <SortTh label="Sortino" k="sortino" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="(Return − RFR) / downside vol · higher better" />
+                  <SortTh label="↑ Upside Cap" k="upsideCapture" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="% of benchmark upside captured on up months · higher better" />
+                  <SortTh label="↓ Downside Cap" k="downsideCapture" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="% of benchmark downside captured on down months · lower better" />
+                  <SortTh label="Info Ratio" k="informationRatio" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Annualised excess return / tracking error" />
+                  <SortTh label="Risk-Adj Ret" k="riskAdjReturn" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Annual Return Avg / Std Dev · higher better" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
                 {displayed.length === 0 ? (
-                  <tr>
-                    <td colSpan={16} className="py-16 text-center font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-                      {hasData ? "No funds match" : "Visit Dashboard first to load fund data"}
-                    </td>
-                  </tr>
+                  <tr><td colSpan={14} className="py-16 text-center font-mono text-[11px] uppercase tracking-widest text-muted-foreground">No funds match</td></tr>
                 ) : displayed.map((f, idx) => {
                   const m = f.metrics;
                   return (
                     <tr key={f.schemeCode} className="transition-colors hover:bg-cyan/[0.04]">
                       <td className="p-3 text-center font-mono text-[10px] tabular-nums text-muted-foreground">{idx + 1}</td>
                       <td className="p-3 max-w-[220px]">
-                        <Link
-                          to="/fund/$id"
-                          params={{ id: f.schemeCode }}
-                          className="block text-[12px] font-semibold leading-snug text-foreground transition-colors hover:text-cyan"
-                        >
-                          {f.schemeName}
-                        </Link>
+                        <Link to="/fund/$id" params={{ id: f.schemeCode }}
+                          className="block text-[12px] font-semibold leading-snug text-foreground transition-colors hover:text-cyan">{f.schemeName}</Link>
                         <p className="mt-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">{f.amc}</p>
                       </td>
-                      <td className="p-3">
-                        <span className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-[8px] uppercase tracking-wider text-muted-foreground whitespace-nowrap">
-                          {f.poolCategory}
-                        </span>
-                      </td>
-                      {/* Explore Score */}
+                      <td className="p-3"><CategoryBadge cat={f.poolCategory as string} /></td>
+                      <td className="p-3 text-right"><ScoreCell v={f.exploreScore} /></td>
+                      {/* Expense Ratio — not available in public feed */}
                       <td className="p-3 text-right">
-                        {f.exploreScore != null ? (
-                          <div className="inline-flex flex-col items-end gap-0.5">
-                            <span className="font-mono text-[13px] font-bold tabular-nums text-cyan">{fmtNum(f.exploreScore, 1)}</span>
-                            <div className="h-1 w-10 overflow-hidden rounded-full bg-border">
-                              <div className="h-full rounded-full bg-cyan" style={{ width: `${Math.min(100, f.exploreScore)}%` }} />
-                            </div>
-                          </div>
-                        ) : <span className="font-mono text-[10px] text-muted-foreground">—</span>}
+                        <span className="font-mono text-[10px] text-muted-foreground" title="TER not available in public AMFI/mfapi feed">—</span>
                       </td>
-                      <td className="p-3 text-right font-mono text-[11px] tabular-nums text-foreground">₹{f.nav.toFixed(2)}</td>
-                      <td className="p-3 text-right font-mono text-[10px] text-muted-foreground">—</td>
-                      <td className={`p-3 text-right font-mono text-[11px] font-bold tabular-nums ${tone(m.annualReturnAvg)}`}>
-                        {fmtPct(m.annualReturnAvg, { signed: true })}
+                      <td className="p-3 text-right">
+                        {m.beta != null ? <span className={`font-mono text-[11px] tabular-nums ${m.beta < 0.8 ? "text-positive" : m.beta < 1.1 ? "text-foreground" : "text-negative"}`}>{fmtNum(m.beta, 2)}</span>
+                          : <span className="font-mono text-[10px] text-muted-foreground">—</span>}
                       </td>
-                      <td className="p-3 text-right font-mono text-[11px] tabular-nums text-foreground">{fmtNum(m.beta, 2)}</td>
-                      <td className="p-3 text-right font-mono text-[11px] tabular-nums text-foreground">{fmtNum(m.stdDev, 4)}</td>
-                      <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(m.jensensAlpha)}`}>{fmtNum(m.jensensAlpha, 4)}</td>
-                      <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(m.sharpe)}`}>{fmtNum(m.sharpe, 2)}</td>
-                      <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(m.sortino)}`}>{fmtNum(m.sortino, 2)}</td>
-                      <td className="p-3 text-right font-mono text-[11px] tabular-nums text-foreground">{fmtPct(m.upsideCapture)}</td>
-                      <td className="p-3 text-right font-mono text-[11px] tabular-nums text-foreground">{fmtPct(m.downsideCapture)}</td>
-                      <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(m.informationRatio)}`}>{fmtNum(m.informationRatio, 2)}</td>
-                      <td className={`p-3 text-right font-mono text-[11px] tabular-nums ${tone(f.riskAdjReturn)}`}>{fmtNum(f.riskAdjReturn, 2)}</td>
+                      <td className="p-3 text-right">
+                        {m.stdDev != null ? <span className="font-mono text-[11px] tabular-nums text-foreground">{fmtPct(m.stdDev)}</span>
+                          : <span className="font-mono text-[10px] text-muted-foreground">—</span>}
+                      </td>
+                      <td className="p-3 text-right">
+                        {m.jensensAlpha != null ? <span className={`font-mono text-[11px] tabular-nums font-semibold ${m.jensensAlpha >= 0 ? "text-positive" : "text-negative"}`}>{fmtPct(m.jensensAlpha, { signed: true })}</span>
+                          : <span className="font-mono text-[10px] text-muted-foreground">—</span>}
+                      </td>
+                      <td className="p-3 text-right">
+                        {m.sharpe != null ? <span className={`font-mono text-[11px] tabular-nums ${m.sharpe >= 1 ? "text-positive" : m.sharpe >= 0 ? "text-foreground" : "text-negative"}`}>{fmtNum(m.sharpe, 2)}</span>
+                          : <span className="font-mono text-[10px] text-muted-foreground">—</span>}
+                      </td>
+                      <td className="p-3 text-right">
+                        {m.sortino != null ? <span className={`font-mono text-[11px] tabular-nums ${m.sortino >= 1.5 ? "text-positive" : m.sortino >= 0 ? "text-foreground" : "text-negative"}`}>{fmtNum(m.sortino, 2)}</span>
+                          : <span className="font-mono text-[10px] text-muted-foreground">—</span>}
+                      </td>
+                      <td className="p-3 text-right"><UpCaptureCell v={m.upsideCapture} /></td>
+                      <td className="p-3 text-right"><DnCaptureCell v={m.downsideCapture} /></td>
+                      <td className="p-3 text-right">
+                        {m.informationRatio != null ? <span className={`font-mono text-[11px] tabular-nums ${m.informationRatio >= 0.5 ? "text-positive" : m.informationRatio >= 0 ? "text-foreground" : "text-negative"}`}>{fmtNum(m.informationRatio, 2)}</span>
+                          : <span className="font-mono text-[10px] text-muted-foreground">—</span>}
+                      </td>
+                      <td className="p-3 text-right">
+                        {f.riskAdjReturn != null ? <span className={`font-mono text-[11px] tabular-nums ${f.riskAdjReturn >= 1 ? "text-positive" : f.riskAdjReturn >= 0 ? "text-foreground" : "text-negative"}`}>{fmtNum(f.riskAdjReturn, 2)}</span>
+                          : <span className="font-mono text-[10px] text-muted-foreground">—</span>}
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
-          <div className="border-t border-border bg-background/40 px-4 py-2.5">
-            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-              {displayed.length.toLocaleString()} funds · Scroll right for all ratio columns
-            </span>
+          <div className="border-t border-border bg-background/40 px-4 py-2.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+            {displayed.length.toLocaleString()} funds shown · ↑ Upside Cap: green ≥ 100%, ↓ Downside Cap: green ≤ 80%, red &gt; 100% · Expense Ratio requires AMC-level data
           </div>
         </div>
-
-        <p className="text-[10px] leading-relaxed text-muted-foreground">
-          All metrics computed from real NAV history via mfapi.in · Ann Ret Avg = average of rolling 1Y simple returns ·
-          Beta and capture ratios require benchmark data (category average NAV series) ·
-          Risk Adj Ret = Ann Ret Avg ÷ Std Dev · Explore Score requires at least Sharpe Ratio data.
-        </p>
       </div>
     </AppShell>
   );
