@@ -248,3 +248,60 @@ export const DEBT_LEADERBOARD_CATEGORIES: QuantFundCategory[] = [
   "Floater",
   "Money Market",
 ];
+
+// ─── Professional category colour palette ─────────────────────────────────────
+// Each canonical category gets a unique brand colour used across all pages
+// for consistent visual identity. Hex values intentionally distinct.
+
+export const CATEGORY_COLORS: Record<QuantFundCategory, string> = {
+  // Equity
+  "Large Cap":               "#3B82F6",   // Blue-500
+  "Mid Cap":                 "#8B5CF6",   // Violet-500
+  "Small Cap":               "#F59E0B",   // Amber-500
+  "Flexi Cap":               "#10B981",   // Emerald-500
+  "Multi Cap":               "#06B6D4",   // Cyan-500
+  "Large & Mid Cap":         "#6366F1",   // Indigo-500
+  "ELSS":                    "#EF4444",   // Red-500
+  "Focused":                 "#F97316",   // Orange-500
+  "Sectoral / Thematic":     "#84CC16",   // Lime-500
+  "Dividend Yield":          "#EC4899",   // Pink-500
+  // Hybrid
+  "Aggressive Hybrid":       "#14B8A6",   // Teal-500
+  "Conservative Hybrid":     "#78716C",   // Stone-500
+  "Balanced Advantage":      "#A855F7",   // Purple-500
+  "Arbitrage":               "#64748B",   // Slate-500
+  "Multi Asset":             "#0EA5E9",   // Sky-500
+  // Debt
+  "Liquid":                  "#94A3B8",   // Slate-400
+  "Overnight":               "#CBD5E1",   // Slate-300
+  "Ultra Short Duration":    "#7DD3FC",   // Sky-300
+  "Low Duration":            "#6EE7B7",   // Emerald-300
+  "Short Duration":          "#4ADE80",   // Green-400
+  "Medium Duration":         "#86EFAC",   // Green-300
+  "Medium to Long Duration": "#FCA5A5",   // Red-300
+  "Long Duration":           "#F87171",   // Red-400
+  "Dynamic Bond":            "#FCD34D",   // Amber-300
+  "Corporate Bond":          "#FDBA74",   // Orange-300
+  "Credit Risk":             "#F9A8D4",   // Pink-300
+  "Banking & PSU":           "#C4B5FD",   // Violet-300
+  "Gilt":                    "#A5B4FC",   // Indigo-300
+  "Gilt 10Y":                "#818CF8",   // Indigo-400
+  "Floater":                 "#67E8F9",   // Cyan-300
+  "Money Market":            "#BAE6FD",   // Sky-200
+  // Index / ETF
+  "Index Fund":              "#0D9488",   // Teal-600
+  "ETF":                     "#0891B2",   // Cyan-600
+  // International / Gold
+  "International / FoF":     "#7C3AED",   // Violet-600
+  "Gold":                    "#CA8A04",   // Yellow-600
+  // Solution-Oriented
+  "Retirement":              "#BE185D",   // Pink-700
+  "Children":                "#B45309",   // Amber-700
+  // Unknown
+  "Unknown":                 "#6B7280",   // Gray-500
+};
+
+/** Returns the professional brand colour for a category. */
+export function categoryColor(cat: QuantFundCategory | string): string {
+  return (CATEGORY_COLORS as Record<string, string>)[cat] ?? "#6B7280";
+}
