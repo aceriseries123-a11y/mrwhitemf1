@@ -18,7 +18,6 @@ import { DataSourceBadge } from "@/components/DataSourceBadge";
 import { getFullRankedList, subscribeToRankedList, type RankedFund } from "@/lib/fund-store";
 import { QUANTFUND_CATEGORIES, categoryColor, type QuantFundCategory } from "@/lib/categories";
 import { computeExploreScore, computeRiskAdjReturn } from "@/lib/explore-metrics";
-import { Link as RouterLink } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/explorer")({
   head: () => ({
@@ -240,9 +239,9 @@ function FundExplorer() {
         <BarChart2 className="mx-auto mb-4 h-12 w-12 text-muted-foreground opacity-30" />
         <h2 className="font-display text-lg font-bold text-foreground">No data yet</h2>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Explorer reads from Dashboard. Visit Dashboard first to score all funds.</p>
-        <RouterLink to="/dashboard" className="mt-6 inline-flex items-center gap-2 rounded-xl bg-cyan px-6 py-2.5 font-mono text-[11px] font-bold uppercase tracking-widest text-background transition-opacity hover:opacity-90">
+        <Link to="/dashboard" className="mt-6 inline-flex items-center gap-2 rounded-xl bg-cyan px-6 py-2.5 font-mono text-[11px] font-bold uppercase tracking-widest text-background transition-opacity hover:opacity-90">
           Load on Dashboard →
-        </RouterLink>
+        </Link>
       </div>
     </AppShell>
   );
