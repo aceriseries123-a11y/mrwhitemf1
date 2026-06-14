@@ -79,41 +79,41 @@ function RatioCell({ v, pct, lowerBetter = false }: { v: number | null; pct?: bo
   );
 }
 
+/** Upside Capture: raw % with + prefix, colored by quality */
 function UpCaptureCell({ v }: { v: number | null }) {
   if (v == null) return <span className="font-mono text-[10px] text-muted-foreground">—</span>;
-  const score = Math.max(-10, Math.min(10, (v - 100) / 10));
-  const color = score > 0.1 ? "text-positive" : score < -0.1 ? "text-negative" : "text-foreground";
-  const sign = score >= 0 ? "+" : "";
-  const barW = Math.round(Math.abs(score) / 10 * 50);
-  const ml = score < 0 ? `${50 - barW}%` : "50%";
+  // >100% = captured MORE than benchmark on up days (green = excellent)
+  // 85-100% = captured slightly less (neutral)
+  // <85% = significantly underperformed on up days (red)
+  const color = v >= 100 ? "text-positive" : v >= 85 ? "text-warning" : "text-negative";
   return (
     <div className="inline-flex flex-col items-end gap-0.5">
-      <span className={`font-mono text-[12px] tabular-nums font-bold ${color}`}>{sign}{score.toFixed(1)}</span>
-      <div className="relative h-1.5 w-14 overflow-hidden rounded-full bg-border">
-        <div className={`absolute h-full rounded-full ${score >= 0 ? "bg-positive" : "bg-negative"}`}
-          style={{ width: `${barW}%`, left: score >= 0 ? "50%" : `${50 - barW}%` }} />
-        <div className="absolute left-1/2 top-0 h-full w-px bg-border/80" />
+      <span className={`font-mono text-[12px] tabular-nums font-bold ${color}`}>
+        +{v.toFixed(1)}%
+      </span>
+      <div className="h-1 w-10 overflow-hidden rounded-full bg-border">
+        <div className="h-full rounded-full bg-positive/60" style={{ width: `${Math.min(100, v / 1.5)}%` }} />
       </div>
-      <span className="font-mono text-[8px] text-muted-foreground">{v.toFixed(1)}% raw</span>
     </div>
   );
 }
 
+/** Downside Capture: raw % colored by quality (lower = better = green) */
 function DnCaptureCell({ v }: { v: number | null }) {
   if (v == null) return <span className="font-mono text-[10px] text-muted-foreground">—</span>;
-  const score = Math.max(-10, Math.min(10, (100 - v) / 10));
-  const color = score > 0.1 ? "text-positive" : score < -0.1 ? "text-negative" : "text-foreground";
-  const sign = score >= 0 ? "+" : "";
-  const barW = Math.round(Math.abs(score) / 10 * 50);
+  // <80% = captured much less downside than benchmark (green = excellent)
+  // 80-100% = captured slightly less (warning)
+  // >100% = fell MORE than benchmark on down days (red = bad)
+  const color = v <= 80 ? "text-positive" : v <= 100 ? "text-warning" : "text-negative";
   return (
     <div className="inline-flex flex-col items-end gap-0.5">
-      <span className={`font-mono text-[12px] tabular-nums font-bold ${color}`}>{sign}{score.toFixed(1)}</span>
-      <div className="relative h-1.5 w-14 overflow-hidden rounded-full bg-border">
-        <div className={`absolute h-full rounded-full ${score >= 0 ? "bg-positive" : "bg-negative"}`}
-          style={{ width: `${barW}%`, left: score >= 0 ? "50%" : `${50 - barW}%` }} />
-        <div className="absolute left-1/2 top-0 h-full w-px bg-border/80" />
+      <span className={`font-mono text-[12px] tabular-nums font-bold ${color}`}>
+        {v.toFixed(1)}%
+      </span>
+      <div className="h-1 w-10 overflow-hidden rounded-full bg-border">
+        <div className={`h-full rounded-full ${v <= 80 ? "bg-positive/60" : v <= 100 ? "bg-warning/60" : "bg-negative/60"}`}
+          style={{ width: `${Math.min(100, v / 1.5)}%` }} />
       </div>
-      <span className="font-mono text-[8px] text-muted-foreground">{v.toFixed(1)}% raw</span>
     </div>
   );
 }
@@ -216,7 +216,7 @@ function FundExplorer() {
         <div className="rounded-xl border border-border bg-surface/60 px-4 py-3">
           <div className="flex flex-wrap gap-x-6 gap-y-1 font-mono text-[9px] text-muted-foreground">
             <span><span className="text-cyan font-bold">Explore Score</span> = Sharpe(20%)+Sortino(15%)+Alpha(15%)+IR(15%)+RAR(15%)+Upside(10%)+Downside(10%)</span>
-            <span><span className="text-cyan font-bold">↑/↓ Capture scores</span> = −10 to +10 · 0 = matches benchmark · +10 = best · raw capture% shown below each score · Formula in Methodology page</span>
+            <span><span className="text-positive font-bold">↑ Upside Cap</span> = fund return ÷ benchmark return on rising months × 100% · green ≥ 100% (fund captured more) · <span className="text-negative font-bold">↓ Downside Cap</span> = same on falling months · green ≤ 80% (fell less than benchmark)</span>
             <span><span className="text-foreground">Expense Ratio</span>: not available in public mfapi.in / AMFI feed — requires AMC-specific data</span>
           </div>
         </div>
@@ -252,8 +252,8 @@ function FundExplorer() {
                   <SortTh label="Alpha (J)" k="jensensAlpha" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Jensen's Alpha = fund 3Y CAGR − (RFR + β × (bm−RFR))" />
                   <SortTh label="Sharpe" k="sharpe" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="(Return − RFR) / std dev · higher better" />
                   <SortTh label="Sortino" k="sortino" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="(Return − RFR) / downside vol · higher better" />
-                  <SortTh label="↑ Up Cap (−10/+10)" k="upsideCapture" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Score=(rawCapture%−100)/10 · 0=matches benchmark · +10=captured 200% of rally · raw% shown below" />
-                  <SortTh label="↓ Dn Cap (−10/+10)" k="downsideCapture" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Score=(100−rawCapture%)/10 · 0=matches benchmark · +10=captured 0% of downside · raw% shown below" />
+                  <SortTh label="↑ Upside Cap %" k="upsideCapture" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Upside Capture % — fund return / benchmark return on UP months × 100. >100% = fund captured more of the rally. Green ≥ 100%, yellow 85-100%, red < 85%." />
+                  <SortTh label="↓ Downside Cap %" k="downsideCapture" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Downside Capture % — fund return / benchmark return on DOWN months × 100. <100% = fund fell less than benchmark. Green ≤ 80%, yellow 80-100%, red > 100%." />
                   <SortTh label="Info Ratio" k="informationRatio" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Annualised excess return / tracking error" />
                   <SortTh label="Risk-Adj Ret" k="riskAdjReturn" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Annual Return Avg / Std Dev · higher better" />
                 </tr>
