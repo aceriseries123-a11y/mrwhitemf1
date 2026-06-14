@@ -384,19 +384,40 @@ export interface EngineMetrics {
 }
 
 // ─── Annual Return Average helper ────────────────────────────────────────────
-// Average of all available 1-year rolling simple returns.
-// Samples up to 200 windows across the full series for performance.
+// Calendar-year returns: computes Jan→Dec return for each available calendar year,
+// then returns the simple arithmetic average of all years.
+// Also exports min/max year return for display in tooltips.
+
+function computeCalendarYearReturns(series: NavPoint[]): number[] {
+  if (series.length < 2) return [];
+  const firstYear = new Date(series[0].t).getUTCFullYear();
+  const lastYear  = new Date(series[series.length - 1].t).getUTCFullYear();
+  if (lastYear <= firstYear) return [];
+
+  const yearReturns: number[] = [];
+  for (let yr = firstYear; yr < lastYear; yr++) {
+    const yearEndMs = Date.UTC(yr, 11, 31, 23, 59, 59, 999);
+    // First point in this calendar year
+    let startPoint: NavPoint | null = null;
+    for (const p of series) {
+      if (new Date(p.t).getUTCFullYear() === yr) { startPoint = p; break; }
+    }
+    if (!startPoint) continue;
+    // Last point in this calendar year
+    const endPoint = navAtOrBefore(series, yearEndMs);
+    if (!endPoint) continue;
+    if (new Date(endPoint.t).getUTCFullYear() !== yr) continue;
+    if (startPoint === endPoint) continue;
+    const ret = endPoint.nav / startPoint.nav - 1;
+    if (isFinite(ret)) yearReturns.push(ret);
+  }
+  return yearReturns;
+}
 
 function computeAnnualReturnAvg(series: NavPoint[]): number | null {
-  if (series.length < 252) return null;
-  const step = Math.max(1, Math.floor(series.length / 200));
-  const returns: number[] = [];
-  for (let i = 252; i < series.length; i += step) {
-    const r = series[i].nav / series[i - 252].nav - 1;
-    if (isFinite(r)) returns.push(r);
-  }
-  if (returns.length === 0) return null;
-  return returns.reduce((a, b) => a + b, 0) / returns.length;
+  const yrs = computeCalendarYearReturns(series);
+  if (yrs.length === 0) return null;
+  return yrs.reduce((a, b) => a + b, 0) / yrs.length;
 }
 
 // ─── Compute metrics for one fund ────────────────────────────────────────────
