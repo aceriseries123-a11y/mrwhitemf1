@@ -22,7 +22,9 @@ import {
   scoreWithPeers,
   getRating,
   getStrengthsWeaknesses,
+  checkEligibility,
   type EngineScoreResult,
+  type EligibilityResult,
 } from "@/lib/scoring-engine";
 
 export const Route = createFileRoute("/fund/$id")({
@@ -88,8 +90,8 @@ function MetricRow({ label, value, tone }: { label: string; value: string; tone?
   );
 }
 
-function PillarBar({ label, score, weight, available, isProxy }: {
-  label: string; score: number; weight: number; available: boolean; isProxy?: boolean;
+function PillarBar({ label, score, weight, available = true }: {
+  label: string; score: number; weight: number; available?: boolean;
 }) {
   const { color } = available ? getRating(score) : { color: "text-muted-foreground" };
   return (
@@ -98,11 +100,6 @@ function PillarBar({ label, score, weight, available, isProxy }: {
         <span className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground leading-tight">
           {label}
         </span>
-        {isProxy && available && (
-          <span className="rounded border border-warning/30 bg-warning/[0.07] px-0.5 font-mono text-[6px] uppercase text-warning">
-            proxy
-          </span>
-        )}
       </div>
       <div className="flex flex-1 items-center gap-2">
         {available ? (
@@ -117,10 +114,10 @@ function PillarBar({ label, score, weight, available, isProxy }: {
         ) : (
           <>
             <div className="h-1 flex-1 overflow-hidden rounded-full bg-border opacity-20" />
-            <span className="w-8 text-right font-mono text-[9px] text-muted-foreground">N/A</span>
+            <span className="w-24 text-right font-mono text-[8px] uppercase tracking-wider text-muted-foreground">Data Not Available</span>
           </>
         )}
-        <span className="w-5 text-right font-mono text-[8px] text-muted-foreground opacity-40">{weight}%</span>
+        <span className="w-9 text-right font-mono text-[8px] text-muted-foreground opacity-40">{weight}%</span>
       </div>
     </div>
   );
@@ -179,7 +176,7 @@ function FundPage() {
     ? classifyAMFICategory(scheme.category)
     : history?.schemeCategory ?? null;
 
-  // ── Peer loading for 7-pillar scoring ────────────────────────────────────
+  // ── Peer loading for category-based scoring ────────────────────────────────────
   // Find all direct-growth peers in the same category. Uses the same
   // queryKey=["nav-history", schemeCode] as the dashboard and rankings page,
   // so if the user visited either of those first all data is already cached.
@@ -230,10 +227,11 @@ function FundPage() {
   const peersTotal  = peerCandidates.length;
   const peersDone   = peersLoaded === peersTotal && peersTotal > 0;
 
-  // Score the fund against its category peers using the 7-pillar engine
+  // Score the fund against its category peers using the new category-based engine
   const engineResult = useMemo((): {
     scoreResult: EngineScoreResult;
     peersCount: number;
+    categoryRank: number | null;
   } | null => {
     if (!history?.series?.length) return null;
 
@@ -260,11 +258,19 @@ function FundPage() {
     const allMetrics = allSeries.map((s) => computeEngineMetrics(s, benchmark));
     const scoreResult = scoreWithPeers(allMetrics[thisFundIdx], allMetrics);
 
-    return { scoreResult, peersCount: allSeries.length };
+    // Category rank — score every peer and rank by fundScore (descending)
+    let categoryRank: number | null = null;
+    if (allSeries.length >= 3) {
+      const fundScores = allMetrics.map((m) => scoreWithPeers(m, allMetrics).fundScore);
+      const sorted = [...fundScores].sort((a, b) => b - a);
+      categoryRank = sorted.indexOf(fundScores[thisFundIdx]) + 1;
+    }
+
+    return { scoreResult, peersCount: allSeries.length, categoryRank };
   }, [history, peerCandidates, peerNavQ, id]);
 
   const sr = engineResult?.scoreResult ?? null;
-  const ratingInfo = sr ? getRating(sr.finalScore) : null;
+  const ratingInfo = sr ? getRating(sr.fundScore) : null;
   const sw = sr ? getStrengthsWeaknesses(sr.pillars) : null;
   const em = sr
     ? (() => {
@@ -282,6 +288,16 @@ function FundPage() {
         const benchmark = buildBenchmark(allSeries);
         return computeEngineMetrics(allSeries[thisFundIdx], benchmark);
       })()
+    : null;
+
+  const fundName = history?.schemeName ?? scheme?.schemeName ?? "";
+  const isDirectPlan = /direct/i.test(fundName);
+  const eligibility: EligibilityResult | null = em
+    ? checkEligibility({
+        historyYears: em.historyYears,
+        isDirectPlan,
+        rolling3yWindowCount: em.rollingReturn3yAvg != null ? 8 : 0,
+      })
     : null;
 
   return (
@@ -348,24 +364,28 @@ function FundPage() {
               <div className="mt-5 grid gap-3 sm:grid-cols-4">
                 <StatCard label="Latest NAV" value={`₹${fmtNum(legacyMetrics.navEnd?.nav ?? null)}`} />
                 {sr ? (
-                  <StatCard label="QuantFund Score" value={String(sr.finalScore)} tone="cyan"
-                    sub={`${sr.rating} · ${sr.confidenceScore}/100 conf · ${sr.fundScore} raw`} />
+                  <StatCard label="Fund Score" value={String(sr.fundScore)} tone="cyan"
+                    sub={`${sr.rating} · Confidence ${sr.confidenceScore}/100`} />
                 ) : (
-                  <StatCard label="QF Score" value="…" tone="cyan" sub="Loading peers…" />
+                  <StatCard label="Fund Score" value="…" tone="cyan" sub="Loading peers…" />
                 )}
-                <StatCard label="1Y Return" value={fmtPct(legacyMetrics.ret1y, { signed: true })}
-                  tone={legacyMetrics.ret1y != null ? (legacyMetrics.ret1y >= 0 ? "positive" : "negative") : undefined} />
+                {sr && engineResult?.categoryRank ? (
+                  <StatCard label="Category Rank" value={`#${engineResult.categoryRank}`} tone="cyan"
+                    sub={`of ${engineResult.peersCount} in ${category ?? "category"}`} />
+                ) : (
+                  <StatCard label="Category Rank" value="…" sub="Loading peers…" />
+                )}
                 <StatCard label="3Y CAGR" value={fmtPct(legacyMetrics.cagr3y, { signed: true })}
                   tone={legacyMetrics.cagr3y != null ? (legacyMetrics.cagr3y >= 0 ? "positive" : "negative") : undefined} />
               </div>
             </div>
 
-            {/* ── 7-Pillar Score Card ─────────────────────────────────────── */}
+            {/* ── Category Score Card ─────────────────────────────────────── */}
             <div className="rounded-xl border border-border bg-surface p-5">
               <div className="mb-4 flex flex-wrap items-center gap-2">
                 <Trophy className="h-4 w-4 text-cyan" />
                 <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-cyan">
-                  7-Pillar QuantFund Score
+                  QuantFund Score
                 </span>
                 {peersDone ? (
                   <span className="flex items-center gap-1 rounded border border-positive/30 bg-positive/[0.07] px-2 py-0.5 font-mono text-[8px] uppercase tracking-widest text-positive">
@@ -378,7 +398,7 @@ function FundPage() {
                     Loading {peersLoaded}/{peersTotal} category peers…
                   </span>
                 ) : null}
-                <InfoBadge text="Scores are category-relative percentiles — a score of 80 means this fund outranks ~80% of its category peers on that pillar. Proxy pillars use NAV-derived metrics (expense ratio, portfolio data not yet available from AMFI)." />
+                <InfoBadge text="Every metric is converted to a percentile rank within the same category before weighting. A category score of 80 means this fund outranks ~80% of its category peers on that category. Portfolio Quality and Manager Quality are marked Data Not Available — holdings and manager-tenure data are not available from AMFI/mfapi.in, so their weight is not faked." />
               </div>
 
               {!sr ? (
@@ -386,6 +406,16 @@ function FundPage() {
                   <Loader2 className="h-5 w-5 animate-spin text-cyan" />
                   <p className="font-mono text-[10px] uppercase tracking-widest">
                     Scoring against {peersTotal} category peers — {peersLoaded} loaded…
+                  </p>
+                </div>
+              ) : eligibility && !eligibility.eligible ? (
+                <div className="flex flex-col items-start gap-2 rounded-lg border border-warning/30 bg-warning/[0.06] p-4">
+                  <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-warning">Not Ranked — Eligibility Not Met</p>
+                  <ul className="list-inside list-disc space-y-0.5 text-xs text-muted-foreground">
+                    {eligibility.reasons.map((r) => <li key={r}>{r}</li>)}
+                  </ul>
+                  <p className="text-[10px] text-muted-foreground">
+                    Eligible funds require ≥5 years of NAV history, a Direct plan, and sufficient history for 3Y rolling-return calculations.
                   </p>
                 </div>
               ) : (
@@ -396,16 +426,17 @@ function FundPage() {
                       <div>
                         <div className="flex items-baseline gap-1">
                           <span className="font-display text-5xl font-black tabular-nums leading-none text-cyan">
-                            {sr.finalScore}
+                            {sr.fundScore}
                           </span>
                           <span className="font-mono text-sm text-muted-foreground">/100</span>
                         </div>
                         <span className={`mt-1 inline-block rounded border px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest ${ratingInfo!.bg} ${ratingInfo!.color}`}>
                           {sr.rating}
                         </span>
+                        <p className="mt-1 font-mono text-[8px] uppercase tracking-widest text-muted-foreground">Fund Score</p>
                       </div>
                       <div className="mb-1">
-                        <p className="font-mono text-[8px] uppercase tracking-widest text-muted-foreground">Confidence</p>
+                        <p className="font-mono text-[8px] uppercase tracking-widest text-muted-foreground">Confidence Score</p>
                         <p className="font-display text-xl font-bold tabular-nums text-foreground">{sr.confidenceScore}<span className="font-mono text-xs text-muted-foreground">/100</span></p>
                         <p className="font-mono text-[8px] text-muted-foreground">{engineResult?.peersCount} peers · {category}</p>
                       </div>
@@ -429,29 +460,28 @@ function FundPage() {
                       </div>
                     )}
 
-                    {/* Overall score bar */}
+                    {/* Fund Score bar */}
                     <div>
                       <div className="mb-1 flex items-center justify-between">
-                        <span className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground">Overall</span>
-                        <span className="font-mono text-[10px] font-bold text-cyan">{sr.finalScore}/100</span>
+                        <span className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground">Fund Score</span>
+                        <span className="font-mono text-[10px] font-bold text-cyan">{sr.fundScore}/100</span>
                       </div>
                       <div className="h-2 overflow-hidden rounded-full bg-border">
                         <div className="h-full rounded-full bg-gradient-to-r from-cyan/70 to-cyan transition-all duration-700"
-                          style={{ width: `${sr.finalScore}%` }} />
+                          style={{ width: `${sr.fundScore}%` }} />
                       </div>
                     </div>
                   </div>
 
-                  {/* Right: pillar breakdown */}
+                  {/* Right: category breakdown */}
                   <div className="space-y-1.5">
-                    <p className="mb-2 font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground">Pillar Breakdown</p>
-                    <PillarBar label="Long-Term Consistency" score={sr.pillars.longTermConsistency.rawScore}  weight={23} available={sr.pillars.longTermConsistency.available} />
-                    <PillarBar label="Short-Term Perf."      score={sr.pillars.shortTermPerformance.rawScore} weight={5}  available={sr.pillars.shortTermPerformance.available} />
-                    <PillarBar label="Risk-Adjusted"         score={sr.pillars.riskAdjusted.rawScore}         weight={20} available={sr.pillars.riskAdjusted.available} />
-                    <PillarBar label="Downside Protection"   score={sr.pillars.downsideProtection.rawScore}   weight={20} available={sr.pillars.downsideProtection.available} />
-                    <PillarBar label="Cost Efficiency"       score={sr.pillars.costEfficiency.rawScore}       weight={15} available={sr.pillars.costEfficiency.available}      isProxy />
-                    <PillarBar label="Portfolio Quality"     score={sr.pillars.portfolioQuality.rawScore}     weight={12} available={sr.pillars.portfolioQuality.available}     isProxy />
-                    <PillarBar label="Management & AUM"      score={sr.pillars.managementAUM.rawScore}        weight={5}  available={sr.pillars.managementAUM.available}        isProxy />
+                    <p className="mb-2 font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground">Category Breakdown</p>
+                    <PillarBar label="Risk"              score={sr.pillars.risk.rawScore}             weight={30} available={sr.pillars.risk.available} />
+                    <PillarBar label="Performance"       score={sr.pillars.performance.rawScore}      weight={25} available={sr.pillars.performance.available} />
+                    <PillarBar label="Consistency"       score={sr.pillars.consistency.rawScore}      weight={20} available={sr.pillars.consistency.available} />
+                    <PillarBar label="Benchmark Skill"   score={sr.pillars.benchmarkSkill.rawScore}   weight={10} available={sr.pillars.benchmarkSkill.available} />
+                    <PillarBar label="Portfolio Quality" score={sr.pillars.portfolioQuality.rawScore} weight={10} available={sr.pillars.portfolioQuality.available} />
+                    <PillarBar label="Manager Quality"   score={sr.pillars.managerQuality.rawScore}   weight={5}  available={sr.pillars.managerQuality.available} />
                   </div>
                 </div>
               )}
@@ -512,7 +542,7 @@ function FundPage() {
                 ].map(([label, val]) => (
                   <MetricRow key={label as string} label={label as string}
                     value={fmtPct(val as number | null, { signed: true })}
-                    tone={val != null ? (val >= 0 ? "positive" : "negative") : undefined} />
+                    tone={val != null ? ((val as number) >= 0 ? "positive" : "negative") : undefined} />
                 ))}
               </MetricsCard>
 
@@ -536,8 +566,9 @@ function FundPage() {
               sourced from{" "}
               <a href="https://www.mfapi.in" target="_blank" rel="noopener noreferrer" className="text-cyan underline underline-offset-2">mfapi.in</a>
               {" "}(community mirror of AMFI). Risk-free rate assumed at 6.50% (91-day G-Sec T-Bill proxy).
-              7-Pillar score uses category-relative percentile ranking across {engineResult?.peersCount ?? peersTotal} direct-growth peers in {category ?? "this category"}.
-              Proxy pillars (Cost Efficiency, Portfolio Quality, Management) use NAV-derived metrics — expense ratio, portfolio holdings, and manager data are not available from AMFI/mfapi.in.
+              Fund Score uses category-relative percentile ranking across {engineResult?.peersCount ?? peersTotal} direct-growth peers in {category ?? "this category"}, never compared across categories.
+              Portfolio Quality and Manager Quality are marked Data Not Available — portfolio holdings, sector exposure, turnover, and manager-tenure data are not available from AMFI/mfapi.in, so their combined 15% weight is redistributed across the four available categories rather than estimated. See the{" "}
+              <Link to="/methodology" className="text-cyan underline underline-offset-2">Methodology</Link> page for the full breakdown.
             </p>
           </>
         )}

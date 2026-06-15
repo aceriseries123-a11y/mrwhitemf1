@@ -15,12 +15,13 @@
  *   • Save is best-effort (quota exceeded → no-op)
  *
  * v2: added ret1d, rollingReturn3yAvg, rollingReturn5yAvg, rollingReturn7yAvg
+ * v3: added medianRollingReturn3y (QuantFund v6 category-based methodology)
  */
 
 import type { EngineMetrics } from "./scoring-engine";
 
 const TODAY = new Date().toISOString().slice(0, 10);
-const KEY = `qf-engine-v2-${TODAY}`;
+const KEY = `qf-engine-v3-${TODAY}`;
 const KEY_PREFIX = "qf-engine-v";
 
 /** Load all cached EngineMetrics for today. Returns empty Map if none. */

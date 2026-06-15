@@ -155,7 +155,7 @@ function ReturnsHistorical() {
               {allRanked.length.toLocaleString()} funds · trailing ST (1D→6M) + rolling LT averages (1Y→7Y)
             </p>
           </div>
-          <DataSourceBadge />
+          <DataSourceBadge source="AMFI + mfapi.in" />
         </div>
 
         {/* Legend */}

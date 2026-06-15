@@ -123,7 +123,7 @@ function FundScreener() {
   }, [allRanked, filters]);
 
   const active = Object.entries(filters).filter(([k, v]) =>
-    k !== "catFilter" && v !== (DEFAULT as Record<string, unknown>)[k]
+    k !== "catFilter" && v !== (DEFAULT as unknown as Record<string, unknown>)[k]
   ).length + (filters.catFilter !== "All" ? 1 : 0);
 
   if (allRanked.length === 0) return (
@@ -163,7 +163,7 @@ function FundScreener() {
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-[12px] text-foreground focus:border-cyan/60 focus:outline-none">
                 {ALL_CATS.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
-              <SliderRow label="Min Engine Score" min={0} max={100} step={1} value={filters.minScore} onChange={v => set("minScore", v)} />
+              <SliderRow label="Min Fund Score" min={0} max={100} step={1} value={filters.minScore} onChange={v => set("minScore", v)} />
               <SliderRow label="Min 3Y CAGR" min={-30} max={50} step={0.5} value={filters.minCagr3y} unit="%" onChange={v => set("minCagr3y", v)} />
               <SliderRow label="Max Drawdown ≥" min={-100} max={0} step={0.5} value={filters.maxMaxDD} unit="%" onChange={v => set("maxMaxDD", v)} />
               <SliderRow label="Min Sharpe" min={-2} max={5} step={0.05} value={filters.minSharpe} onChange={v => set("minSharpe", v)} />

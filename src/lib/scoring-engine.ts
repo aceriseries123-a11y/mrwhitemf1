@@ -191,6 +191,33 @@ function rollingReturnAvg(series: NavPoint[], years: number): number | null {
 }
 
 /**
+ * Rolling Returns Array — every rolling `years`-year point-to-point return as a
+ * fraction (e.g. 0.12 = 12%). Used for median / distribution-based metrics.
+ * Requires ≥ 8 valid windows, otherwise returns an empty array.
+ */
+function rollingReturnsArray(series: NavPoint[], years: number): number[] {
+  const windowMs = years * YEAR_MS;
+  const minMs = windowMs * 0.85;
+  const returns: number[] = [];
+  for (let i = series.length - 1; i >= 0; i--) {
+    const start = navAtOrBefore(series, series[i].t - windowMs);
+    if (!start) break;
+    if (series[i].t - start.t < minMs) continue;
+    const r = series[i].nav / start.nav - 1;
+    if (isFinite(r)) returns.push(r);
+  }
+  return returns.length >= 8 ? returns : [];
+}
+
+/** Median of a numeric array. Returns null for an empty array. */
+function medianOf(arr: number[]): number | null {
+  if (arr.length === 0) return null;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+/**
  * Omega Ratio — probability-weighted return quality above the daily risk-free rate.
  * omega = Σ max(0, r − MAR) / Σ max(0, MAR − r)
  * where MAR = daily risk-free rate.
@@ -385,6 +412,8 @@ export interface EngineMetrics {
   rollingReturn5yAvg: number | null;
   /** Arithmetic mean of all rolling 7Y point-to-point returns. */
   rollingReturn7yAvg: number | null;
+  /** Median of all rolling 3Y point-to-point returns — used by the Performance category. */
+  medianRollingReturn3y: number | null;
   /** Calendar-year simple returns as fractions, chronological. */
   calendarYearReturns: number[];
   bearMarketReturn: number | null;
@@ -496,6 +525,7 @@ export function computeEngineMetrics(
     rollingReturn3yAvg: rollingReturnAvg(series, 3),
     rollingReturn5yAvg: rollingReturnAvg(series, 5),
     rollingReturn7yAvg: rollingReturnAvg(series, 7),
+    medianRollingReturn3y: medianOf(rollingReturnsArray(series, 3)),
     calendarYearReturns: computeCalendarYearReturns(series),
     bearMarketReturn: bm.bearMarketReturn,
 
@@ -504,37 +534,87 @@ export function computeEngineMetrics(
   };
 }
 
-// ─── Confidence Score (spec-compliant) ───────────────────────────────────────
+// ─── Eligibility ──────────────────────────────────────────────────────────────
+
+export interface EligibilityResult {
+  eligible: boolean;
+  reasons: string[];
+}
+
+/**
+ * Eligibility gate per the QuantFund v6 methodology:
+ *   - Minimum 5 years of NAV history
+ *   - Direct plan only
+ *   - Sufficient NAV history to compute 3Y rolling returns (≥ 8 rolling windows)
+ *
+ * Funds that fail eligibility are not given a Fund Score / Confidence Score —
+ * the UI should display "Not Ranked — see eligibility" instead.
+ */
+export function checkEligibility(params: {
+  historyYears: number;
+  isDirectPlan: boolean;
+  rolling3yWindowCount: number;
+}): EligibilityResult {
+  const reasons: string[] = [];
+  if (params.historyYears < 5) reasons.push("Less than 5 years of NAV history");
+  if (!params.isDirectPlan) reasons.push("Not a Direct plan");
+  if (params.rolling3yWindowCount < 8) reasons.push("Insufficient NAV history for 3Y rolling-return calculations");
+  return { eligible: reasons.length === 0, reasons };
+}
+
+// ─── Confidence Score (0-100, separate from Fund Score) ──────────────────────
+//
+// Factors:
+//   Fund Age            40%  — longer history = more reliable statistics
+//   Data Completeness   30%  — % of required metrics that could be computed
+//   Manager Stability   15%  — manager tenure/change data (unavailable → neutral 50)
+//   AUM Stability       15%  — AUM history data (unavailable → neutral 50)
+//
+// Manager Stability and AUM Stability are not derivable from AMFI/mfapi.in NAV
+// history alone. Rather than fabricate values, both factors default to a
+// neutral 50/100 score, which is disclosed in the methodology page.
 
 export function computeConfidenceScore(m: EngineMetrics): number {
+  // Fund Age — 40%
   const ageScore =
     m.historyYears >= 10 ? 100 :
-    m.historyYears >=  7 ?  90 :
-    m.historyYears >=  5 ?  75 :
-    m.historyYears >=  3 ?  60 : 40;
+    m.historyYears >=  7 ?  85 :
+    m.historyYears >=  5 ?  70 :
+    m.historyYears >=  3 ?  50 : 30;
 
+  // Data Completeness — 30%
   const keys: (keyof EngineMetrics)[] = [
-    "cagr3y", "sharpe", "sortino", "maxDrawdown", "stdDev",
-    "consistencyBeatRate", "informationRatio", "downsideCapture",
-    "jensensAlpha", "calmarRatio", "omegaRatio", "bearMarketReturn",
+    "sharpe", "sortino", "maxDrawdown", "downsideCapture",
+    "rollingReturn3yAvg", "rollingReturn5yAvg", "medianRollingReturn3y",
+    "consistencyBeatRate", "informationRatio", "longRunAlpha",
   ];
-  const avail   = keys.filter(k => m[k] != null).length;
-  const pct     = avail / keys.length;
-  const compScore = pct > 0.95 ? 100 : pct > 0.90 ? 80 : pct > 0.80 ? 60 : 40;
+  const avail = keys.filter(k => m[k] != null).length;
+  const completenessScore = Math.round((avail / keys.length) * 100);
 
-  return Math.round(ageScore * 0.70 + compScore * 0.30);
+  // Manager Stability — 15% (data not available; neutral)
+  const managerStabilityScore = 50;
+
+  // AUM Stability — 15% (data not available; neutral)
+  const aumStabilityScore = 50;
+
+  return Math.round(
+    ageScore              * 0.40 +
+    completenessScore     * 0.30 +
+    managerStabilityScore * 0.15 +
+    aumStabilityScore     * 0.15
+  );
 }
 
 // ─── Rating bands ─────────────────────────────────────────────────────────────
 
 export function getRating(score: number): { rating: string; color: string; bg: string } {
-  if (score >= 90) return { rating: "Elite",         color: "text-cyan",     bg: "bg-cyan/10 border-cyan/30" };
-  if (score >= 85) return { rating: "Excellent",     color: "text-positive", bg: "bg-positive/10 border-positive/30" };
-  if (score >= 80) return { rating: "Strong",        color: "text-positive", bg: "bg-positive/10 border-positive/30" };
-  if (score >= 75) return { rating: "Above Average", color: "text-positive", bg: "bg-positive/10 border-positive/30" };
-  if (score >= 65) return { rating: "Average",       color: "text-warning",  bg: "bg-warning/10 border-warning/30" };
-  if (score >= 50) return { rating: "Weak",          color: "text-warning",  bg: "bg-warning/10 border-warning/30" };
-  return            { rating: "Avoid",          color: "text-negative", bg: "bg-negative/10 border-negative/30" };
+  if (score >= 95) return { rating: "Elite+",       color: "text-cyan",     bg: "bg-cyan/10 border-cyan/30" };
+  if (score >= 90) return { rating: "Elite",        color: "text-cyan",     bg: "bg-cyan/10 border-cyan/30" };
+  if (score >= 80) return { rating: "Excellent",    color: "text-positive", bg: "bg-positive/10 border-positive/30" };
+  if (score >= 70) return { rating: "Good",         color: "text-positive", bg: "bg-positive/10 border-positive/30" };
+  if (score >= 60) return { rating: "Average",      color: "text-warning",  bg: "bg-warning/10 border-warning/30" };
+  if (score >= 50) return { rating: "Below Average", color: "text-warning",  bg: "bg-warning/10 border-warning/30" };
+  return            { rating: "Weak",          color: "text-negative", bg: "bg-negative/10 border-negative/30" };
 }
 
 // ─── Score one fund with peer context ─────────────────────────────────────────
@@ -543,6 +623,7 @@ export interface PillarResult {
   rawScore: number;
   weight:   number;
   label:    string;
+  available: boolean;
 }
 
 export interface EngineScoreResult {
@@ -552,97 +633,152 @@ export interface EngineScoreResult {
   rating:          string;
   ratingColor:     string;
   pillars: {
-    longTermConsistency:  PillarResult;
-    shortTermPerformance: PillarResult;
-    riskAdjusted:         PillarResult;
-    downsideProtection:   PillarResult;
-    costEfficiency:       PillarResult;
-    portfolioQuality:     PillarResult;
-    managementAUM:        PillarResult;
+    risk:           PillarResult;
+    performance:    PillarResult;
+    consistency:    PillarResult;
+    benchmarkSkill: PillarResult;
+    portfolioQuality: PillarResult;
+    managerQuality:   PillarResult;
   };
 }
 
+/**
+ * QuantFund v6 category-based scoring methodology.
+ *
+ * Every metric is converted into a percentile rank (0-100) within the same
+ * category's peer set before being weighted. Category scores are then
+ * combined into the Fund Score using the weights below.
+ *
+ *   Category            Weight   Metrics (internal weighting)
+ *   ──────────────────────────────────────────────────────────────────────
+ *   Risk                 30%     Sharpe(8) + Sortino(8) + MaxDD(8) + DownsideCapture(6)
+ *   Performance          25%     3Y Mean Rolling(8) + 5Y Mean Rolling(12) + Median Rolling(5)
+ *   Consistency          20%     Benchmark Outperformance(8) + Peer Outperformance(7) + Quartile Consistency(5)
+ *   Benchmark Skill      10%     Information Ratio(6) + Alpha(4)
+ *   Portfolio Quality    10%     Not available from AMFI/mfapi.in — marked unavailable
+ *   Manager Quality       5%     Not available from AMFI/mfapi.in — marked unavailable
+ *
+ * Portfolio Quality and Manager Quality (combined 15%) are not computable from
+ * NAV history alone. Per the "never fake data" requirement, both are marked
+ * `available: false` and excluded from the Fund Score; their combined weight
+ * is redistributed proportionally across the four available categories.
+ *
+ * Fund Score = round(Σ categoryScore × redistributedWeight), range 0-100.
+ * Confidence Score is computed separately and NEVER combined into Fund Score.
+ * finalScore === fundScore (kept distinct from confidenceScore for display).
+ */
 export function scoreWithPeers(
   m: EngineMetrics,
   peers: EngineMetrics[],
 ): EngineScoreResult {
-  const pct = (v: number | null, arr: (number | null)[], lower = false): number => {
-    if (v == null) return 50;
+  const pct = (v: number | null, arr: (number | null)[], lower = false): number | null => {
+    if (v == null) return null;
     const valid = arr.filter((x): x is number => x != null);
-    if (valid.length <= 1) return 50;
+    if (valid.length <= 1) return null;
     return percentileOf(valid, v, lower);
   };
 
-  // Pillar 1 — Long-Term Consistency (23%)
-  const ltScores = [
-    pct(m.cagr3y,  peers.map(p => p.cagr3y)),
-    pct(m.cagr5y,  peers.map(p => p.cagr5y)),
-    pct(m.cagr7y,  peers.map(p => p.cagr7y)),
-    pct(m.cagr10y, peers.map(p => p.cagr10y)),
-  ];
-  const ltAvail = ltScores.filter((_, i) => [m.cagr3y, m.cagr5y, m.cagr7y, m.cagr10y][i] != null);
-  const ltBase  = ltAvail.length ? ltAvail.reduce((a, b) => a + b, 0) / ltAvail.length : 50;
-  const conBonus = pct(m.consistencyBeatRate, peers.map(p => p.consistencyBeatRate));
-  const ltScore  = Math.round(ltBase * 0.75 + conBonus * 0.25);
+  /** Weighted average of percentile components; returns null if none available. */
+  const weighted = (comps: { p: number | null; w: number }[]): number | null => {
+    let sum = 0, totalW = 0;
+    for (const { p, w } of comps) {
+      if (p == null) continue;
+      sum += p * w;
+      totalW += w;
+    }
+    return totalW > 0 ? sum / totalW : null;
+  };
 
-  // Pillar 2 — Short-Term Performance (5%)
-  const stVals  = [m.ret1m, m.ret3m, m.ret6m];
-  const stPeers = [peers.map(p => p.ret1m), peers.map(p => p.ret3m), peers.map(p => p.ret6m)];
-  const stAvail = stVals.filter(v => v != null);
-  const stScore = stAvail.length
-    ? Math.round(stVals.map((v, i) => pct(v, stPeers[i])).filter((_, i) => stVals[i] != null)
-        .reduce((a, b) => a + b, 0) / stAvail.length)
-    : 50;
+  // ─── Risk (30%) — Sharpe(8) + Sortino(8) + MaxDD(8, lower=better) + DownsideCapture(6, lower=better)
+  const riskScore = weighted([
+    { p: pct(m.sharpe,          peers.map(p => p.sharpe)),                  w: 8 },
+    { p: pct(m.sortino,         peers.map(p => p.sortino)),                 w: 8 },
+    { p: pct(m.maxDrawdown,     peers.map(p => p.maxDrawdown),     true),   w: 8 },
+    { p: pct(m.downsideCapture, peers.map(p => p.downsideCapture), true),   w: 6 },
+  ]);
 
-  // Pillar 3 — Risk-Adjusted (20%)
-  const raScore = Math.round(
-    pct(m.sortino,          peers.map(p => p.sortino))          * 10/20 +
-    pct(m.sharpe,           peers.map(p => p.sharpe))           *  6/20 +
-    pct(m.informationRatio, peers.map(p => p.informationRatio)) *  4/20
+  // ─── Performance (25%) — 3Y Mean Rolling(8) + 5Y Mean Rolling(12) + Median Rolling(5)
+  const performanceScore = weighted([
+    { p: pct(m.rollingReturn3yAvg,    peers.map(p => p.rollingReturn3yAvg)),    w: 8 },
+    { p: pct(m.rollingReturn5yAvg,    peers.map(p => p.rollingReturn5yAvg)),    w: 12 },
+    { p: pct(m.medianRollingReturn3y, peers.map(p => p.medianRollingReturn3y)), w: 5 },
+  ]);
+
+  // ─── Consistency (20%) — Benchmark Outperformance Freq(8) + Peer Outperformance Freq(7) + Quartile Consistency(5)
+  const peerBeatRate = (() => {
+    const peerVals = peers.map(p => p.rollingReturn3yAvg).filter((x): x is number => x != null);
+    if (m.rollingReturn3yAvg == null || peerVals.length <= 1) return null;
+    const beaten = peerVals.filter(v => m.rollingReturn3yAvg! > v).length;
+    return (beaten / peerVals.length) * 100;
+  })();
+
+  // Quartile Consistency — % of rolling 3Y windows landing in the top half (above median)
+  // of this fund's own rolling-return distribution that ALSO beat the category median
+  // rolling 3Y return. Approximated via: this fund's rolling 3Y mean vs the category's
+  // median rolling 3Y mean, percentile-ranked across peers.
+  const quartileConsistency = pct(
+    m.rollingReturn3yAvg,
+    peers.map(p => p.rollingReturn3yAvg),
   );
 
-  // Pillar 4 — Downside Protection (20%)
-  const dpScore = Math.round(
-    pct(m.downsideCapture, peers.map(p => p.downsideCapture), true) *  8/20 +
-    pct(m.upsideCapture,   peers.map(p => p.upsideCapture))         *  3/20 +
-    pct(m.maxDrawdown,     peers.map(p => p.maxDrawdown),     true) *  4/20 +
-    pct(m.recoveryMonths,  peers.map(p => p.recoveryMonths),  true) *  3/20 +
-    pct(m.beta,            peers.map(p => p.beta),            true) *  1/20 +
-    pct(m.stdDev,          peers.map(p => p.stdDev),          true) *  1/20
-  );
+  const consistencyScore = weighted([
+    { p: m.consistencyBeatRate != null ? m.consistencyBeatRate * 100 : null, w: 8 },
+    { p: peerBeatRate,                                                        w: 7 },
+    { p: quartileConsistency,                                                 w: 5 },
+  ]);
 
-  // Pillar 5 — Cost Efficiency (15%)
-  const ceScore = Math.round(
-    pct(m.jensensAlpha,  peers.map(p => p.jensensAlpha))          *  9/15 +
-    pct(m.trackingError, peers.map(p => p.trackingError), true)   *  6/15
-  );
+  // ─── Benchmark Skill (10%) — Information Ratio(6) + Alpha(4)
+  const benchmarkSkillScore = weighted([
+    { p: pct(m.informationRatio, peers.map(p => p.informationRatio)), w: 6 },
+    { p: pct(m.longRunAlpha,      peers.map(p => p.longRunAlpha)),     w: 4 },
+  ]);
 
-  // Pillar 6 — Portfolio Quality (12%)
-  const pqScore = Math.round(
-    pct(m.calmarRatio,  peers.map(p => p.calmarRatio))          *  4/12 +
-    pct(m.omegaRatio,   peers.map(p => p.omegaRatio))           *  5/12 +
-    pct(m.rollingStdDev, peers.map(p => p.rollingStdDev), true) *  3/12
-  );
+  // ─── Portfolio Quality (10%) & Manager Quality (5%) — not derivable from NAV history
+  const portfolioQualityScore: number | null = null;
+  const managerQualityScore: number | null = null;
 
-  // Pillar 7 — Management & AUM (5%)
-  const mgScore = Math.round(
-    pct(m.rollingPos1y,       peers.map(p => p.rollingPos1y))       *  1/5 +
-    pct(m.rollingReturn1yAvg, peers.map(p => p.rollingReturn1yAvg)) *  2/5 +
-    pct(m.bearMarketReturn,   peers.map(p => p.bearMarketReturn))   *  2/5
-  );
+  // Base category weights per spec
+  const CATEGORY_WEIGHTS = {
+    risk: 0.30,
+    performance: 0.25,
+    consistency: 0.20,
+    benchmarkSkill: 0.10,
+    portfolioQuality: 0.10,
+    managerQuality: 0.05,
+  };
 
-  const fundScore = Math.round(
-    ltScore * 0.23 +
-    stScore * 0.05 +
-    raScore * 0.20 +
-    dpScore * 0.20 +
-    ceScore * 0.15 +
-    pqScore * 0.12 +
-    mgScore * 0.05
-  );
+  const categoryScores: Record<keyof typeof CATEGORY_WEIGHTS, number | null> = {
+    risk: riskScore,
+    performance: performanceScore,
+    consistency: consistencyScore,
+    benchmarkSkill: benchmarkSkillScore,
+    portfolioQuality: portfolioQualityScore,
+    managerQuality: managerQualityScore,
+  };
+
+  // Redistribute weight of unavailable categories proportionally across available ones
+  let availableWeight = 0;
+  let unavailableWeight = 0;
+  for (const key of Object.keys(CATEGORY_WEIGHTS) as (keyof typeof CATEGORY_WEIGHTS)[]) {
+    if (categoryScores[key] != null) availableWeight += CATEGORY_WEIGHTS[key];
+    else unavailableWeight += CATEGORY_WEIGHTS[key];
+  }
+
+  let fundScore = 50; // neutral fallback if nothing is available
+  if (availableWeight > 0) {
+    const redistributionFactor = (availableWeight + unavailableWeight) / availableWeight;
+    let sum = 0;
+    for (const key of Object.keys(CATEGORY_WEIGHTS) as (keyof typeof CATEGORY_WEIGHTS)[]) {
+      const score = categoryScores[key];
+      if (score == null) continue;
+      sum += score * CATEGORY_WEIGHTS[key] * redistributionFactor;
+    }
+    fundScore = Math.round(sum);
+  }
 
   const conf = computeConfidenceScore(m);
-  const finalScore = Math.round(fundScore * 0.90 + conf * 0.10);
+  // Fund Score and Confidence Score are kept separate — finalScore === fundScore.
+  const finalScore = fundScore;
   const { rating, color } = getRating(finalScore);
 
   return {
@@ -652,13 +788,12 @@ export function scoreWithPeers(
     rating,
     ratingColor: color,
     pillars: {
-      longTermConsistency:  { rawScore: ltScore, weight: 0.23, label: "LT Consistency" },
-      shortTermPerformance: { rawScore: stScore, weight: 0.05, label: "Short-Term" },
-      riskAdjusted:         { rawScore: raScore, weight: 0.20, label: "Risk-Adjusted" },
-      downsideProtection:   { rawScore: dpScore, weight: 0.20, label: "Downside Prot." },
-      costEfficiency:       { rawScore: ceScore, weight: 0.15, label: "Cost Efficiency" },
-      portfolioQuality:     { rawScore: pqScore, weight: 0.12, label: "Portfolio Quality" },
-      managementAUM:        { rawScore: mgScore, weight: 0.05, label: "Management" },
+      risk:             { rawScore: riskScore ?? 0,           weight: CATEGORY_WEIGHTS.risk * 100,             label: "Risk",               available: riskScore != null },
+      performance:      { rawScore: performanceScore ?? 0,    weight: CATEGORY_WEIGHTS.performance * 100,      label: "Performance",        available: performanceScore != null },
+      consistency:      { rawScore: consistencyScore ?? 0,    weight: CATEGORY_WEIGHTS.consistency * 100,      label: "Consistency",        available: consistencyScore != null },
+      benchmarkSkill:   { rawScore: benchmarkSkillScore ?? 0,  weight: CATEGORY_WEIGHTS.benchmarkSkill * 100,   label: "Benchmark Skill",    available: benchmarkSkillScore != null },
+      portfolioQuality: { rawScore: 0,                         weight: CATEGORY_WEIGHTS.portfolioQuality * 100, label: "Portfolio Quality",  available: false },
+      managerQuality:   { rawScore: 0,                         weight: CATEGORY_WEIGHTS.managerQuality * 100,   label: "Manager Quality",    available: false },
     },
   };
 }
@@ -670,10 +805,17 @@ export interface StrengthsWeaknesses {
   weaknesses: string[];
 }
 
+/**
+ * Strengths are categories scoring ≥ 70 (top-quartile-ish percentile),
+ * weaknesses are categories scoring < 50 (below category median).
+ * Unavailable categories (Portfolio Quality, Manager Quality without data)
+ * are excluded from both lists — they are shown separately as
+ * "Data Not Available" in the UI.
+ */
 export function getStrengthsWeaknesses(
   pillars: EngineScoreResult["pillars"],
 ): StrengthsWeaknesses {
-  const entries = Object.values(pillars);
+  const entries = Object.values(pillars).filter((p) => p.available);
   const strengths = entries
     .filter((p) => p.rawScore >= 70)
     .sort((a, b) => b.rawScore - a.rawScore)

@@ -12,21 +12,22 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ScreenerRouteImport } from './routes/screener'
+import { Route as ReturnsHistoricalRouteImport } from './routes/returns-historical'
 import { Route as ResearchDeskRouteImport } from './routes/research-desk'
 import { Route as RankingsRouteImport } from './routes/rankings'
 import { Route as PortfolioRouteImport } from './routes/portfolio'
+import { Route as MethodologyRouteImport } from './routes/methodology'
 import { Route as ExplorerRouteImport } from './routes/explorer'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as CompareRouteImport } from './routes/compare'
-import { Route as ReturnsHistoricalRouteImport } from './routes/returns-historical'
-import { Route as MethodologyRouteImport } from './routes/methodology'
 import { Route as BacktestRouteImport } from './routes/backtest'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as FundIdRouteImport } from './routes/fund.$id'
+import { Route as ApiPublicSchemeTerRouteImport } from './routes/api/public/scheme-ter'
 import { Route as ApiPublicSchemeAumRouteImport } from './routes/api/public/scheme-aum'
+import { Route as ApiPublicNavBatchRouteImport } from './routes/api/public/nav-batch'
 import { Route as ApiPublicMarketTicksRouteImport } from './routes/api/public/market-ticks'
 import { Route as ApiPublicAmfiNavallRouteImport } from './routes/api/public/amfi-navall'
-import { Route as ApiPublicNavBatchRouteImport } from './routes/api/public/nav-batch'
 
 const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
   id: '/sitemap.xml',
@@ -41,6 +42,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const ScreenerRoute = ScreenerRouteImport.update({
   id: '/screener',
   path: '/screener',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReturnsHistoricalRoute = ReturnsHistoricalRouteImport.update({
+  id: '/returns-historical',
+  path: '/returns-historical',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ResearchDeskRoute = ResearchDeskRouteImport.update({
@@ -58,6 +64,11 @@ const PortfolioRoute = PortfolioRouteImport.update({
   path: '/portfolio',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MethodologyRoute = MethodologyRouteImport.update({
+  id: '/methodology',
+  path: '/methodology',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ExplorerRoute = ExplorerRouteImport.update({
   id: '/explorer',
   path: '/explorer',
@@ -71,16 +82,6 @@ const DashboardRoute = DashboardRouteImport.update({
 const CompareRoute = CompareRouteImport.update({
   id: '/compare',
   path: '/compare',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ReturnsHistoricalRoute = ReturnsHistoricalRouteImport.update({
-  id: '/returns-historical',
-  path: '/returns-historical',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MethodologyRoute = MethodologyRouteImport.update({
-  id: '/methodology',
-  path: '/methodology',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BacktestRoute = BacktestRouteImport.update({
@@ -98,9 +99,19 @@ const FundIdRoute = FundIdRouteImport.update({
   path: '/fund/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicSchemeTerRoute = ApiPublicSchemeTerRouteImport.update({
+  id: '/api/public/scheme-ter',
+  path: '/api/public/scheme-ter',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicSchemeAumRoute = ApiPublicSchemeAumRouteImport.update({
   id: '/api/public/scheme-aum',
   path: '/api/public/scheme-aum',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicNavBatchRoute = ApiPublicNavBatchRouteImport.update({
+  id: '/api/public/nav-batch',
+  path: '/api/public/nav-batch',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiPublicMarketTicksRoute = ApiPublicMarketTicksRouteImport.update({
@@ -113,69 +124,70 @@ const ApiPublicAmfiNavallRoute = ApiPublicAmfiNavallRouteImport.update({
   path: '/api/public/amfi-navall',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiPublicNavBatchRoute = ApiPublicNavBatchRouteImport.update({
-  id: '/api/public/nav-batch',
-  path: '/api/public/nav-batch',
-  getParentRoute: () => rootRouteImport,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/returns-historical': typeof ReturnsHistoricalRoute
   '/backtest': typeof BacktestRoute
   '/compare': typeof CompareRoute
   '/dashboard': typeof DashboardRoute
   '/explorer': typeof ExplorerRoute
+  '/methodology': typeof MethodologyRoute
   '/portfolio': typeof PortfolioRoute
   '/rankings': typeof RankingsRoute
   '/research-desk': typeof ResearchDeskRoute
+  '/returns-historical': typeof ReturnsHistoricalRoute
   '/screener': typeof ScreenerRoute
   '/settings': typeof SettingsRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/fund/$id': typeof FundIdRoute
   '/api/public/amfi-navall': typeof ApiPublicAmfiNavallRoute
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
-  '/api/public/scheme-aum': typeof ApiPublicSchemeAumRoute
   '/api/public/nav-batch': typeof ApiPublicNavBatchRoute
+  '/api/public/scheme-aum': typeof ApiPublicSchemeAumRoute
+  '/api/public/scheme-ter': typeof ApiPublicSchemeTerRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/returns-historical': typeof ReturnsHistoricalRoute
   '/backtest': typeof BacktestRoute
   '/compare': typeof CompareRoute
   '/dashboard': typeof DashboardRoute
   '/explorer': typeof ExplorerRoute
+  '/methodology': typeof MethodologyRoute
   '/portfolio': typeof PortfolioRoute
   '/rankings': typeof RankingsRoute
   '/research-desk': typeof ResearchDeskRoute
+  '/returns-historical': typeof ReturnsHistoricalRoute
   '/screener': typeof ScreenerRoute
   '/settings': typeof SettingsRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/fund/$id': typeof FundIdRoute
   '/api/public/amfi-navall': typeof ApiPublicAmfiNavallRoute
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
-  '/api/public/scheme-aum': typeof ApiPublicSchemeAumRoute
   '/api/public/nav-batch': typeof ApiPublicNavBatchRoute
+  '/api/public/scheme-aum': typeof ApiPublicSchemeAumRoute
+  '/api/public/scheme-ter': typeof ApiPublicSchemeTerRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/returns-historical': typeof ReturnsHistoricalRoute
   '/backtest': typeof BacktestRoute
   '/compare': typeof CompareRoute
   '/dashboard': typeof DashboardRoute
   '/explorer': typeof ExplorerRoute
+  '/methodology': typeof MethodologyRoute
   '/portfolio': typeof PortfolioRoute
   '/rankings': typeof RankingsRoute
   '/research-desk': typeof ResearchDeskRoute
+  '/returns-historical': typeof ReturnsHistoricalRoute
   '/screener': typeof ScreenerRoute
   '/settings': typeof SettingsRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/fund/$id': typeof FundIdRoute
   '/api/public/amfi-navall': typeof ApiPublicAmfiNavallRoute
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
-  '/api/public/scheme-aum': typeof ApiPublicSchemeAumRoute
   '/api/public/nav-batch': typeof ApiPublicNavBatchRoute
+  '/api/public/scheme-aum': typeof ApiPublicSchemeAumRoute
+  '/api/public/scheme-ter': typeof ApiPublicSchemeTerRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -185,17 +197,20 @@ export interface FileRouteTypes {
     | '/compare'
     | '/dashboard'
     | '/explorer'
+    | '/methodology'
     | '/portfolio'
     | '/rankings'
     | '/research-desk'
+    | '/returns-historical'
     | '/screener'
     | '/settings'
     | '/sitemap.xml'
     | '/fund/$id'
     | '/api/public/amfi-navall'
     | '/api/public/market-ticks'
-    | '/api/public/scheme-aum'
     | '/api/public/nav-batch'
+    | '/api/public/scheme-aum'
+    | '/api/public/scheme-ter'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -203,17 +218,20 @@ export interface FileRouteTypes {
     | '/compare'
     | '/dashboard'
     | '/explorer'
+    | '/methodology'
     | '/portfolio'
     | '/rankings'
     | '/research-desk'
+    | '/returns-historical'
     | '/screener'
     | '/settings'
     | '/sitemap.xml'
     | '/fund/$id'
     | '/api/public/amfi-navall'
     | '/api/public/market-ticks'
-    | '/api/public/scheme-aum'
     | '/api/public/nav-batch'
+    | '/api/public/scheme-aum'
+    | '/api/public/scheme-ter'
   id:
     | '__root__'
     | '/'
@@ -221,17 +239,20 @@ export interface FileRouteTypes {
     | '/compare'
     | '/dashboard'
     | '/explorer'
+    | '/methodology'
     | '/portfolio'
     | '/rankings'
     | '/research-desk'
+    | '/returns-historical'
     | '/screener'
     | '/settings'
     | '/sitemap.xml'
     | '/fund/$id'
     | '/api/public/amfi-navall'
     | '/api/public/market-ticks'
-    | '/api/public/scheme-aum'
     | '/api/public/nav-batch'
+    | '/api/public/scheme-aum'
+    | '/api/public/scheme-ter'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -240,17 +261,20 @@ export interface RootRouteChildren {
   CompareRoute: typeof CompareRoute
   DashboardRoute: typeof DashboardRoute
   ExplorerRoute: typeof ExplorerRoute
+  MethodologyRoute: typeof MethodologyRoute
   PortfolioRoute: typeof PortfolioRoute
   RankingsRoute: typeof RankingsRoute
   ResearchDeskRoute: typeof ResearchDeskRoute
+  ReturnsHistoricalRoute: typeof ReturnsHistoricalRoute
   ScreenerRoute: typeof ScreenerRoute
   SettingsRoute: typeof SettingsRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   FundIdRoute: typeof FundIdRoute
   ApiPublicAmfiNavallRoute: typeof ApiPublicAmfiNavallRoute
   ApiPublicMarketTicksRoute: typeof ApiPublicMarketTicksRoute
-  ApiPublicSchemeAumRoute: typeof ApiPublicSchemeAumRoute
   ApiPublicNavBatchRoute: typeof ApiPublicNavBatchRoute
+  ApiPublicSchemeAumRoute: typeof ApiPublicSchemeAumRoute
+  ApiPublicSchemeTerRoute: typeof ApiPublicSchemeTerRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -276,6 +300,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ScreenerRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/returns-historical': {
+      id: '/returns-historical'
+      path: '/returns-historical'
+      fullPath: '/returns-historical'
+      preLoaderRoute: typeof ReturnsHistoricalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/research-desk': {
       id: '/research-desk'
       path: '/research-desk'
@@ -295,6 +326,13 @@ declare module '@tanstack/react-router' {
       path: '/portfolio'
       fullPath: '/portfolio'
       preLoaderRoute: typeof PortfolioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/methodology': {
+      id: '/methodology'
+      path: '/methodology'
+      fullPath: '/methodology'
+      preLoaderRoute: typeof MethodologyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/explorer': {
@@ -339,11 +377,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FundIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/scheme-ter': {
+      id: '/api/public/scheme-ter'
+      path: '/api/public/scheme-ter'
+      fullPath: '/api/public/scheme-ter'
+      preLoaderRoute: typeof ApiPublicSchemeTerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/scheme-aum': {
       id: '/api/public/scheme-aum'
       path: '/api/public/scheme-aum'
       fullPath: '/api/public/scheme-aum'
       preLoaderRoute: typeof ApiPublicSchemeAumRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/nav-batch': {
+      id: '/api/public/nav-batch'
+      path: '/api/public/nav-batch'
+      fullPath: '/api/public/nav-batch'
+      preLoaderRoute: typeof ApiPublicNavBatchRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/public/market-ticks': {
@@ -360,36 +412,40 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicAmfiNavallRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/public/nav-batch': {
-      id: '/api/public/nav-batch'
-      path: '/api/public/nav-batch'
-      fullPath: '/api/public/nav-batch'
-      preLoaderRoute: typeof ApiPublicNavBatchRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
-  ReturnsHistoricalRoute,
-  MethodologyRoute,
   IndexRoute: IndexRoute,
   BacktestRoute: BacktestRoute,
   CompareRoute: CompareRoute,
   DashboardRoute: DashboardRoute,
   ExplorerRoute: ExplorerRoute,
+  MethodologyRoute: MethodologyRoute,
   PortfolioRoute: PortfolioRoute,
   RankingsRoute: RankingsRoute,
   ResearchDeskRoute: ResearchDeskRoute,
+  ReturnsHistoricalRoute: ReturnsHistoricalRoute,
   ScreenerRoute: ScreenerRoute,
   SettingsRoute: SettingsRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   FundIdRoute: FundIdRoute,
   ApiPublicAmfiNavallRoute: ApiPublicAmfiNavallRoute,
   ApiPublicMarketTicksRoute: ApiPublicMarketTicksRoute,
-  ApiPublicSchemeAumRoute: ApiPublicSchemeAumRoute,
   ApiPublicNavBatchRoute: ApiPublicNavBatchRoute,
+  ApiPublicSchemeAumRoute: ApiPublicSchemeAumRoute,
+  ApiPublicSchemeTerRoute: ApiPublicSchemeTerRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

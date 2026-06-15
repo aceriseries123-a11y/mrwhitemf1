@@ -93,21 +93,24 @@ function Note({ type, children }: { type: "info" | "warn" | "ok" | "verify"; chi
 
 const TOC_ITEMS = [
   { id: "data-sources",     label: "1. Data Sources" },
-  { id: "dashboard",        label: "2. Dashboard Page" },
+  { id: "eligibility",      label: "2. Eligibility Rules" },
+  { id: "fund-score",       label: "3. Fund Score" },
+  { id: "confidence-score", label: "   • Confidence Score" },
+  { id: "rating-bands",     label: "   • Rating Bands" },
+  { id: "dashboard",        label: "4. Dashboard Page" },
   { id: "annual-return",    label: "   • Avg Cal-Yr Return" },
   { id: "rolling-1y-avg",   label: "   • Rolling 1Y Avg" },
-  { id: "engine-score",     label: "   • Engine Score" },
-  { id: "explorer",         label: "3. Explorer Page" },
+  { id: "explorer",         label: "5. Explorer Page" },
   { id: "capture-ratios",   label: "   • Capture Ratios" },
   { id: "ratio-metrics",    label: "   • Ratio Metrics" },
   { id: "explore-score",    label: "   • Explore Score" },
-  { id: "rankings",         label: "4. Rankings Page" },
-  { id: "returns",          label: "5. Returns Page" },
-  { id: "screener",         label: "6. Screener Page" },
-  { id: "risk-metrics",     label: "7. Risk Formulas" },
-  { id: "benchmark",        label: "8. Benchmark" },
-  { id: "limitations",      label: "9. Known Gaps" },
-  { id: "verify",           label: "10. How to Verify" },
+  { id: "rankings",         label: "6. Rankings Page" },
+  { id: "returns",          label: "7. Returns Page" },
+  { id: "screener",         label: "8. Screener Page" },
+  { id: "risk-metrics",     label: "9. Risk Formulas" },
+  { id: "benchmark",        label: "10. Benchmark" },
+  { id: "limitations",      label: "11. Known Gaps" },
+  { id: "verify",           label: "12. How to Verify" },
 ];
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
@@ -194,8 +197,104 @@ function MethodologyPage() {
               </Card>
             </Section>
 
-            {/* ── 2. DASHBOARD ───────────────────────────────────────────── */}
-            <Section id="dashboard" title="2. Dashboard Page" tag="Dashboard">
+            {/* ── 2. ELIGIBILITY ─────────────────────────────────────────── */}
+            <Section id="eligibility" title="2. Eligibility Rules" tag="All Funds">
+              <Card>
+                <p className="font-mono text-[10px] text-muted-foreground mb-3 leading-relaxed">
+                  Before a fund receives a Fund Score or Confidence Score, it must pass three checks.
+                  Funds that fail any check are shown as <span className="text-foreground font-semibold">"Not Ranked — Eligibility Not Met"</span> on their fund page instead of a score.
+                </p>
+                <div className="space-y-1">
+                  <Row label="Minimum 5-Year History" weight="Gate" desc="historyYears ≥ 5. Computed from (lastNAVdate − firstNAVdate) / 365 days. Funds younger than 5 years are not ranked, regardless of how strong their early returns look." source="mfapi.in NAV history" />
+                  <Row label="Direct Plan Only" weight="Gate" desc="Scheme name must match /direct/i. Regular plans (with distributor commission drag) are excluded from all rankings and category peer sets." source="AMFI NAVAll.txt scheme name" />
+                  <Row label="Sufficient Rolling-Return History" weight="Gate" desc="≥ 8 valid rolling 3-year windows must be computable (requires ≥ 0.85 × 3 years = 2.55 years between the earliest and latest usable window starts, i.e. comfortably more than the 5Y minimum once daily data density is accounted for)." source="mfapi.in NAV history" />
+                </div>
+                <Note type="info">
+                  Eligibility is checked per fund, independently of category. A fund can be eligible in one check (e.g. 6 years of history) but still fail another (e.g. it's a Regular plan).
+                </Note>
+              </Card>
+            </Section>
+
+            {/* ── 3. FUND SCORE ──────────────────────────────────────────── */}
+            <Section id="fund-score" title="3. Fund Score — Category-Based Methodology" tag="Core">
+              <Card>
+                <p className="font-mono text-[10px] text-muted-foreground mb-3 leading-relaxed">
+                  The Fund Score (0–100) is computed <span className="text-foreground font-semibold">separately for each mutual fund category</span> — Large Cap funds are ranked only against other Large Cap funds, Mid Cap against Mid Cap, and so on. Funds are <span className="text-foreground font-semibold">never compared across categories</span>.
+                </p>
+                <Formula
+                  label="Step 1 — Percentile rank (how each metric is converted to 0–100)"
+                  expr={`percentileRank(fund_value, all_peer_values) =\n  (count where peer < fund_value\n   + 0.5 × count where peer = fund_value)\n  / total_peers × 100\n\nFor LOWER-IS-BETTER metrics (Max Drawdown, Downside Capture, Tracking Error):\n  score = 100 − percentileRank\n\nIf a metric is null for a fund, or fewer than 2 peers have a value,\nthat metric is excluded and its weight is redistributed within its category.`}
+                />
+                <div className="mt-3 space-y-1">
+                  <p className="font-mono text-[9px] uppercase tracking-widest text-cyan font-bold mb-2">Category Weights (sum to 100%)</p>
+                  <Row label="Risk" weight="30%" desc="Sharpe Ratio(8) + Sortino Ratio(8) + Maximum Drawdown(8, lower=better) + Downside Capture(6, lower=better)." source="mfapi.in NAV history + RBI RFR" />
+                  <Row label="Performance" weight="25%" desc="3Y Mean Rolling Return(8) + 5Y Mean Rolling Return(12) + Median Rolling Return(5). NOT 1Y return, NOT YTD, NOT simple trailing-return ranking." source="mfapi.in NAV history" />
+                  <Row label="Consistency" weight="20%" desc="Benchmark Outperformance Frequency(8) + Peer Outperformance Frequency(7) + Quartile Consistency(5)." source="mfapi.in NAV + category benchmark" />
+                  <Row label="Benchmark Skill" weight="10%" desc="Information Ratio(6) + Alpha(4)." source="mfapi.in NAV + category benchmark" />
+                  <Row label="Portfolio Quality" weight="10%" desc="Concentration(4) + Sector Concentration(3) + Turnover(3). Portfolio holdings data is not available from AMFI/mfapi.in." source="Not Available" />
+                  <Row label="Manager Quality" weight="5%" desc="Manager Tenure(3) + Manager Stability(2). Manager-tenure data is not available from AMFI/mfapi.in." source="Not Available" />
+                </div>
+                <Note type="warn">
+                  <strong>Portfolio Quality and Manager Quality are marked "Data Not Available"</strong>, not estimated or faked. Their combined 15% weight is redistributed <span className="text-foreground font-semibold">proportionally</span> across the four available categories (Risk, Performance, Consistency, Benchmark Skill), which together sum to 85% — each available category's effective weight is scaled by 100/85.
+                </Note>
+                <Formula
+                  label="Step 2 — Category score → Fund Score"
+                  expr={`For each available category C:\n  categoryScore(C) = Σ (metric_percentile × metric_weight) / Σ available metric_weights\n\nredistributionFactor = (Σ all category weights) / (Σ available category weights)\n                     = 100% / 85%   (when Portfolio Quality + Manager Quality unavailable)\n\nFund Score = round( Σ categoryScore(C) × categoryWeight(C) × redistributionFactor )\n\nRange: 0–100. Deterministic and reproducible — same NAV data always\nproduces the same Fund Score, with no randomness or hidden adjustments.`}
+                  notes="Performance metrics use rolling-window means and medians (NOT simple trailing 1Y/YTD returns), per the methodology requirement that long-horizon consistency matters more than recent performance."
+                />
+              </Card>
+
+              {/* Consistency detail */}
+              <Card accent>
+                <p className="font-mono text-[9px] uppercase tracking-widest text-cyan font-bold mb-2">Consistency Category — Detail</p>
+                <div className="space-y-3">
+                  <Formula
+                    label="Benchmark Outperformance Frequency"
+                    expr={`For each rolling 3-year window, compare fund return vs the category benchmark\n(equal-weighted average of all peer funds — see Section 10) over the same window.\n\nconsistencyBeatRate = (windows where fund > benchmark) / (total windows)\n\nResult is a fraction 0–1, converted to 0–100 before weighting.\nRequires ≥ 8 rolling windows.`}
+                  />
+                  <Formula
+                    label="Peer Outperformance Frequency"
+                    expr={`peerBeatRate = (peers whose 3Y mean rolling return this fund exceeds)\n             / (total peers with a valid 3Y mean rolling return) × 100\n\nAnswers: "What % of category peers does this fund's typical 3-year\nreturn outperform?"`}
+                  />
+                  <Formula
+                    label="Quartile Consistency"
+                    expr={`quartileConsistency = percentileRank(\n  fund.rollingReturn3yAvg,\n  peers[].rollingReturn3yAvg\n)\n\nMeasures whether the fund's typical 3-year return places it consistently\nin the upper half of its category's return distribution.`}
+                  />
+                </div>
+              </Card>
+            </Section>
+
+            {/* ── CONFIDENCE SCORE ───────────────────────────────────────── */}
+            <Section id="confidence-score" title="Confidence Score (0–100, Separate from Fund Score)" tag="Core">
+              <Card>
+                <p className="font-mono text-[10px] text-muted-foreground mb-3 leading-relaxed">
+                  The Confidence Score is <span className="text-foreground font-semibold">never combined with the Fund Score</span> — they are displayed side by side. It indicates how much statistical weight to give the Fund Score: a high Fund Score on a 5-year-old fund with sparse data deserves less confidence than the same score on a 15-year fund with complete data.
+                </p>
+                <Formula
+                  label="Confidence Score formula"
+                  expr={`Confidence Score = round(\n    ageScore              × 0.40   (Fund Age)\n  + completenessScore     × 0.30   (Data Completeness)\n  + managerStabilityScore × 0.15   (Manager Stability)\n  + aumStabilityScore     × 0.15   (AUM Stability)\n)\n\nageScore:\n  ≥10 years → 100   7-10 years → 85   5-7 years → 70\n  3-5 years → 50    < 3 years  → 30\n\ncompletenessScore = (count of 10 key metrics that are non-null / 10) × 100\n  Checked: Sharpe, Sortino, MaxDD, Downside Capture, 3Y/5Y Mean Rolling,\n  Median Rolling, Benchmark Beat Rate, Information Ratio, Alpha\n\nmanagerStabilityScore = 50  (neutral — manager-tenure data not available)\naumStabilityScore     = 50  (neutral — AUM-history data not available)`}
+                  notes="Manager Stability and AUM Stability default to a neutral 50/100 because the underlying data is not available from AMFI/mfapi.in. This is disclosed rather than estimated, and is the reason these two factors cannot push the Confidence Score below 50 × 0.30 = 15 or above 50 × 0.30 = 15 on their own."
+                />
+              </Card>
+            </Section>
+
+            {/* ── RATING BANDS ───────────────────────────────────────────── */}
+            <Section id="rating-bands" title="Rating Bands" tag="Display">
+              <Card>
+                <div className="space-y-1">
+                  <Row label="Elite+" weight="95-100" desc="Top-tier across nearly every available category for its peer group." />
+                  <Row label="Elite" weight="90-94" desc="Consistently strong across most categories." />
+                  <Row label="Excellent" weight="80-89" desc="Above-average on most categories, few weaknesses." />
+                  <Row label="Good" weight="70-79" desc="Solidly above the category median." />
+                  <Row label="Average" weight="60-69" desc="Roughly in line with category peers." />
+                  <Row label="Below Average" weight="50-59" desc="Trails the category median on most metrics." />
+                  <Row label="Weak" weight="<50" desc="Underperforms most category peers across available metrics." />
+                </div>
+              </Card>
+            </Section>
+
+            {/* ── 4. DASHBOARD ───────────────────────────────────────────── */}
+            <Section id="dashboard" title="4. Dashboard Page" tag="Dashboard">
               <Note type="info">
                 Dashboard loads ALL Direct-Growth funds (~1,300+), fetches NAV history for each, and computes metrics in the background as data arrives. Scores update live as more data loads.
               </Note>
@@ -244,43 +343,24 @@ function MethodologyPage() {
                 </Card>
               </div>
 
-              {/* Engine Score */}
-              <div id="engine-score" className="scroll-mt-20 space-y-3">
-                <p className="font-mono text-[10px] font-bold text-foreground border-l-2 border-cyan pl-3">Column: "Score" (Engine Score — 7-Pillar System)</p>
+              {/* Fund Score column reference */}
+              <div id="dashboard-fund-score" className="scroll-mt-20 space-y-3">
+                <p className="font-mono text-[10px] font-bold text-foreground border-l-2 border-cyan pl-3">Column: "Fund Score"</p>
                 <Card>
-                  <p className="font-mono text-[10px] text-muted-foreground mb-3 leading-relaxed">
-                    The score ranges 0–100. Each metric is <span className="text-foreground font-semibold">percentile-ranked within its category peer group</span>
-                    — a Large Cap fund only competes against other Large Cap funds, never against Small Cap funds.
-                    Peer group = all Direct-Growth funds in the same QuantFund category.
+                  <p className="font-mono text-[10px] text-muted-foreground leading-relaxed">
+                    The Fund Score shown on this column is computed using the category-based methodology described in{" "}
+                    <a href="#fund-score" className="text-cyan underline underline-offset-2">Section 3 — Fund Score</a>.
+                    Each fund is scored against other Direct-Growth funds in the <span className="text-foreground font-semibold">same QuantFund category only</span> — Large Cap vs Large Cap, Mid Cap vs Mid Cap, and so on.
                   </p>
-                  <Formula
-                    label="Percentile rank (how each metric is converted to 0–100)"
-                    expr={`percentileRank(fund_value, all_peer_values) =\n  (count where peer < fund_value\n   + 0.5 × count where peer = fund_value)\n  / total_peers × 100\n\nFor LOWER-IS-BETTER metrics (Beta, StdDev, MaxDD, DownsideCapture):\n  score = 100 − percentileRank`}
-                  />
-                  <div className="mt-3 space-y-1">
-                    <p className="font-mono text-[9px] uppercase tracking-widest text-cyan font-bold mb-2">7 Pillars & Weights</p>
-                    <Row label="Pillar 1: Long-Term Consistency" weight="23%" desc="3Y CAGR(5) + 5Y CAGR(6) + 7Y CAGR(5) + 10Y CAGR(4) + Beat-Rate(3). Each sub-metric is percentile-ranked then weighted." source="mfapi.in NAV history" />
-                    <Row label="Pillar 2: Short-Term Performance" weight="5%" desc="1M(1) + 3M(2) + 6M(2). Recent momentum to catch regime shifts." source="mfapi.in NAV history" />
-                    <Row label="Pillar 3: Risk-Adjusted Returns" weight="20%" desc="Sortino(10) + Sharpe(6) + Info Ratio(4). Return quality per unit of risk." source="mfapi.in NAV history + RBI RFR" />
-                    <Row label="Pillar 4: Downside Protection" weight="20%" desc="Downside Cap(8) + Upside Cap(3) + MaxDD(4) + Recovery(3) + Beta(1) + StdDev(1)." source="mfapi.in NAV + peer benchmark" />
-                    <Row label="Pillar 5: Cost Efficiency" weight="15%" desc="Jensen's Alpha(9) + Tracking Error(6, lower=better). Net alpha after market exposure cost." source="mfapi.in NAV + peer benchmark" />
-                    <Row label="Pillar 6: Portfolio Quality" weight="12%" desc="Calmar(4) + Omega(5) + Rolling StdDev(3, lower=better)." source="mfapi.in NAV history" />
-                    <Row label="Pillar 7: Management" weight="5%" desc="Longevity bonus(1) + Rolling 1Y+(2) + Bear Market Return(2)." source="mfapi.in NAV + peer benchmark" />
-                  </div>
-                  <Formula
-                    label="Final Published Score"
-                    expr={`Raw Fund Score = Σ (pillar_percentile × pillar_weight) / Σ available_weights\n\nFinal Score = round(Raw Score × 0.90 + Confidence Score × 0.10)\n\nConfidence Score = 0.70 × ageScore + 0.30 × completenessScore\n  Age:          < 3Y→40, 3-5Y→60, 5-7Y→75, 7-10Y→90, ≥10Y→100\n  Completeness: 12 key metrics checked; >95% available→100, etc.\n\nThe 10% confidence discount prevents new funds (launched in bull markets)\nfrom artificially ranking high with limited data.`}
-                    notes="If a pillar has zero available metrics (all null), that pillar's weight is redistributed to the other pillars. Score is always computed from what's available."
-                  />
                   <Note type="verify">
-                    To verify a fund's score: check its 3Y CAGR vs peers in the same category. The fund with the highest 3Y CAGR in its category should have ~95-100 percentile for that sub-metric.
+                    To verify a fund's score: filter the Dashboard to a single category. The fund ranked last should have a Fund Score near 0, and the fund ranked first should be near 100 — Fund Score is a weighted blend of category-relative percentile ranks.
                   </Note>
                 </Card>
               </div>
             </Section>
 
-            {/* ── 3. EXPLORER ────────────────────────────────────────────── */}
-            <Section id="explorer" title="3. Explorer Page" tag="Explorer">
+            {/* ── 5. EXPLORER ────────────────────────────────────────────── */}
+            <Section id="explorer" title="5. Explorer Page" tag="Explorer">
               <Note type="info">
                 Explorer reads from the same computed metrics that Dashboard produces. No additional API calls are made. All values come from the real NAV series stored after Dashboard scoring.
               </Note>
@@ -371,18 +451,18 @@ function MethodologyPage() {
             </Section>
 
             {/* ── 4. RANKINGS ────────────────────────────────────────────── */}
-            <Section id="rankings" title="4. Rankings Page" tag="Rankings">
+            <Section id="rankings" title="6. Rankings Page" tag="Rankings">
               <Card>
                 <Formula
                   label="Ranking Score — primary sort on Rankings page"
-                  expr={`rankingScore = Engine Score × 0.50\n             + Return Score  × 0.30\n             + Explore Score × 0.20\n\nReturn Score = ShortTerm × 0.30 + LongTerm × 0.70\n  ShortTerm = mean_percentile(1W×25%, 1M×25%, 3M×25%, 6M×25%)\n  LongTerm  = mean_percentile(1Y×15%, 3Y×25%, 5Y×30%, 7Y×30%)\n\nAll sub-scores are 0–100, category-relative percentile ranks.\n\nWeighting rationale:\n  50% Engine  — most comprehensive (7 pillars, all risk/return aspects)\n  30% Return  — actual performance is what investors care about most\n  20% Explore — additional ratio quality, prevents gaming with 2 metrics\n\nEngine Score is mandatory — null Engine Score → null Ranking Score.`}
+                  expr={`rankingScore = Fund Score × 0.50\n             + Return Score  × 0.30\n             + Explore Score × 0.20\n\nReturn Score = ShortTerm × 0.30 + LongTerm × 0.70\n  ShortTerm = mean_percentile(1D×20%, 1W×20%, 1M×20%, 3M×20%, 6M×20%)\n  LongTerm  = mean_percentile(Rolling1Y×25%, Rolling3Y×25%, Rolling5Y×25%, Rolling7Y×25%)\n\nAll sub-scores are 0–100, category-relative percentile ranks.\n\nWeighting rationale:\n  50% Fund Score — the category-based methodology (Risk, Performance, Consistency, Benchmark Skill)\n  30% Return     — actual performance is what investors care about most\n  20% Explore    — additional ratio quality, prevents gaming with 2 metrics\n\nFund Score is mandatory — null Fund Score → null Ranking Score.`}
                 />
-                <Note type="info">Rankings also shows all 7 pillar scores individually (LT Consistency, Short-Term, Risk-Adj, Downside, Cost, Portfolio, Management) so you can see why a fund ranks where it does.</Note>
+                <Note type="info">Rankings also shows the Fund Score's category breakdown (Risk, Performance, Consistency, Benchmark Skill, Portfolio Quality, Manager Quality) so you can see why a fund ranks where it does — see Section 3.</Note>
               </Card>
             </Section>
 
             {/* ── 5. RETURNS ─────────────────────────────────────────────── */}
-            <Section id="returns" title="5. Returns Page" tag="Returns Historical">
+            <Section id="returns" title="7. Returns Page" tag="Returns Historical">
               <Card>
                 <div className="space-y-3">
                   <Formula
@@ -400,14 +480,14 @@ function MethodologyPage() {
             </Section>
 
             {/* ── 6. SCREENER ────────────────────────────────────────────── */}
-            <Section id="screener" title="6. Screener Page" tag="Screener">
+            <Section id="screener" title="8. Screener Page" tag="Screener">
               <Card>
                 <p className="font-mono text-[10px] text-muted-foreground leading-relaxed mb-3">
                   All 15 screener filters operate on the same <code className="text-foreground">EngineMetrics</code> values computed in the Dashboard.
                   No new calculations are done. Filters are exact comparisons against real computed values:
                 </p>
                 <div className="space-y-1">
-                  <Row label="Min Engine Score" weight="0–100" desc="fund.finalScore ≥ filter value" />
+                  <Row label="Min Fund Score" weight="0–100" desc="fund.fundScore ≥ filter value" />
                   <Row label="Min 3Y CAGR" weight="%" desc="metrics.cagr3y × 100 ≥ filter value" />
                   <Row label="Max Drawdown ≥" weight="%" desc="metrics.maxDrawdown × 100 ≥ filter value (e.g., −30% means allow up to −30% drawdown)" />
                   <Row label="Min Sharpe" weight="" desc="metrics.sharpe ≥ filter value" />
@@ -427,7 +507,7 @@ function MethodologyPage() {
             </Section>
 
             {/* ── 7. RISK FORMULAS ───────────────────────────────────────── */}
-            <Section id="risk-metrics" title="7. Complete Risk Metric Formulas" tag="All Pages">
+            <Section id="risk-metrics" title="9. Complete Risk Metric Formulas" tag="All Pages">
               <Card>
                 <div className="space-y-3">
                   <Formula
@@ -451,7 +531,7 @@ function MethodologyPage() {
             </Section>
 
             {/* ── 8. BENCHMARK ───────────────────────────────────────────── */}
-            <Section id="benchmark" title="8. Category Benchmark Construction" tag="Benchmark">
+            <Section id="benchmark" title="10. Category Benchmark Construction" tag="Benchmark">
               <Card>
                 <p className="font-mono text-[10px] text-muted-foreground mb-3 leading-relaxed">
                   QuantFund does NOT use Nifty 50, Sensex, or any external market index as benchmark.
@@ -470,8 +550,11 @@ function MethodologyPage() {
             </Section>
 
             {/* ── 9. LIMITATIONS ─────────────────────────────────────────── */}
-            <Section id="limitations" title="9. Known Limitations & Honest Gaps" tag="Trust">
+            <Section id="limitations" title="11. Known Limitations & Honest Gaps" tag="Trust">
               <div className="space-y-3">
+                <Note type="warn">
+                  <strong>Portfolio Quality (10% weight) & Manager Quality (5% weight)</strong>: Portfolio concentration, sector concentration, turnover, manager tenure, and manager stability are not available from AMFI/mfapi.in. Both categories are marked "Data Not Available" on every fund page; their combined 15% weight is redistributed proportionally across Risk, Performance, Consistency, and Benchmark Skill — never estimated or faked.
+                </Note>
                 <Note type="warn">
                   <strong>Fund Size (AUM)</strong>: Not available in public mfapi.in or AMFI NAVAll.txt. Requires AMC-level scraping or a paid vendor. Shows "—" everywhere.
                 </Note>
@@ -494,7 +577,7 @@ function MethodologyPage() {
             </Section>
 
             {/* ── 10. HOW TO VERIFY ──────────────────────────────────────── */}
-            <Section id="verify" title="10. How to Verify Any Number" tag="Trust">
+            <Section id="verify" title="12. How to Verify Any Number" tag="Trust">
               <Card accent>
                 <div className="space-y-4">
                   <p className="font-mono text-[10px] text-muted-foreground leading-relaxed">
@@ -528,7 +611,7 @@ function MethodologyPage() {
                     <div className="rounded-lg border border-border bg-background/60 p-3 space-y-1">
                       <p className="font-mono text-[10px] font-bold text-foreground">Verify Score is category-relative</p>
                       <p className="font-mono text-[10px] text-muted-foreground">
-                        Filter Dashboard to any single category (e.g., "Large Cap"). The fund ranked last should have Engine Score ≈ 0–10. The fund ranked first should have ≈ 90–100. Score = percentile rank within that category.
+                        Filter Dashboard to any single category (e.g., "Large Cap"). The fund ranked last should have a Fund Score ≈ 0–10. The fund ranked first should have ≈ 90–100. Fund Score = weighted blend of category-relative percentile ranks, as described in Section 3.
                       </p>
                     </div>
                     <div className="rounded-lg border border-border bg-background/60 p-3 space-y-1">

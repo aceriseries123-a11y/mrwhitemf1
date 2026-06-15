@@ -257,7 +257,7 @@ function FundExplorer() {
               {allRanked.length.toLocaleString()} funds · ratio & risk metrics · category-relative scoring
             </p>
           </div>
-          <DataSourceBadge />
+          <DataSourceBadge source="AMFI + mfapi.in" />
         </div>
 
         {/* Legend */}

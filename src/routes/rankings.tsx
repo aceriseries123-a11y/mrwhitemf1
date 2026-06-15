@@ -1,9 +1,9 @@
 /**
  * rankings.tsx — Composite Ranking Score
  *
- * Ranking Score = Engine Score (50%) + Return Score (30%) + Explore Score (20%)
+ * Ranking Score = Fund Score (50%) + Return Score (30%) + Explore Score (20%)
  *
- * Columns: Sno · Fund · Category · Ranking Score · Engine Score · Return Score · Explore Score
+ * Columns: Sno · Fund · Category · Ranking Score · Fund Score · Return Score · Explore Score
  * All columns sortable · Category dropdown filter · Color-coded category badges
  */
 import { createFileRoute, Link } from "@tanstack/react-router";
@@ -20,7 +20,7 @@ export const Route = createFileRoute("/rankings")({
   head: () => ({
     meta: [
       { title: "Rankings — QuantFund" },
-      { name: "description", content: "Composite ranking across Engine Score, Return Score, and Explore Score." },
+      { name: "description", content: "Composite ranking across Fund Score, Return Score, and Explore Score." },
     ],
   }),
   component: Rankings,
@@ -141,15 +141,15 @@ function Rankings() {
               {allRanked.length.toLocaleString()} funds · Ranking Score = Engine(50%) + Return(30%) + Explore(20%)
             </p>
           </div>
-          <DataSourceBadge />
+          <DataSourceBadge source="AMFI + mfapi.in" />
         </div>
 
         {/* Score key */}
         <div className="rounded-xl border border-border bg-surface/60 px-4 py-3">
           <p className="mb-2 font-mono text-[9px] uppercase tracking-widest text-cyan font-bold">Composite Ranking Score (0–100)</p>
           <div className="flex flex-wrap gap-x-5 gap-y-1 font-mono text-[9px] text-muted-foreground">
-            <span><span className="text-foreground">Ranking Score</span> = Engine 50% + Return 30% + Explore 20%</span>
-            <span><span className="text-foreground">Engine Score</span> = 7-pillar fundamental quality × 90% + Confidence × 10%</span>
+            <span><span className="text-foreground">Ranking Score</span> = Fund 50% + Return 30% + Explore 20%</span>
+            <span><span className="text-foreground">Fund Score</span> = category-based weighted blend of Risk(30%) + Performance(25%) + Consistency(20%) + Benchmark Skill(10%), redistributed across Portfolio/Manager Quality (Data Not Available)</span>
             <span><span className="text-foreground">Return Score</span> = ST(1D+1W+1M+3M+6M) × 30% + LT(Rolling 1Y/3Y/5Y/7Y) × 70%</span>
             <span><span className="text-foreground">Explore Score</span> = Sharpe 20% + Sortino 15% + Alpha 15% + IR 15% + RAR 15% + Captures 20%</span>
           </div>
@@ -178,8 +178,8 @@ function Rankings() {
                   <th className="w-10 p-3 text-center font-medium">#</th>
                   <SortTh label="Fund" k="schemeName" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} right={false} />
                   <SortTh label="Category" k="poolCategory" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} right={false} />
-                  <SortTh label="Ranking Score" k="rankingScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} accent title="Engine(50%)+Return(30%)+Explore(20%)" />
-                  <SortTh label="Engine" k="engineScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="7-pillar engine final score" />
+                  <SortTh label="Ranking Score" k="rankingScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} accent title="Fund(50%)+Return(30%)+Explore(20%)" />
+                  <SortTh label="Fund Score" k="engineScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Category-based Fund Score (Risk/Performance/Consistency/Benchmark Skill)" />
                   <SortTh label="Return" k="returnScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="ST×30%+LT×70% rolling returns" />
                   <SortTh label="Explore" k="exploreScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Ratio-based: Sharpe/Sortino/Alpha/IR/RAR/Captures" />
                 </tr>
@@ -219,9 +219,9 @@ function Rankings() {
           </div>
         </div>
         <p className="text-[10px] leading-relaxed text-muted-foreground">
-          <span className="text-foreground">Ranking Score</span> = Engine Score × 50% + Return Score × 30% + Explore Score × 20%.
+          <span className="text-foreground">Ranking Score</span> = Fund Score × 50% + Return Score × 30% + Explore Score × 20%.
           All sub-scores are 0–100 percentile-relative within category peers.
-          Engine Score = 7-pillar weighted average × 90% + Confidence × 10%.
+          Fund Score = category-based weighted blend (Risk, Performance, Consistency, Benchmark Skill) — see Methodology for the full breakdown.
         </p>
       </div>
     </AppShell>

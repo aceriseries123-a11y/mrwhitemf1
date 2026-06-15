@@ -16,7 +16,7 @@ export const Route = createFileRoute("/dashboard")({
   head: () => ({
     meta: [
       { title: "Dashboard — QuantFund" },
-      { name: "description", content: "Full-universe fund rankings — all AMFI Direct-Growth schemes, scored with a 7-pillar Engine Score." },
+      { name: "description", content: "Full-universe fund rankings — all AMFI Direct-Growth schemes, scored with a category-based Fund Score." },
     ],
   }),
   component: DashboardPage,
@@ -58,12 +58,12 @@ function ScoreBar({ value }: { value: number | null }) {
   );
 }
 
-function SortTh({ label, k, sortKey, sortDir, onSort, right = true }: {
-  label: string; k: SortKey; sortKey: SortKey; sortDir: SortDir; onSort: (k: SortKey) => void; right?: boolean;
+function SortTh({ label, k, sortKey, sortDir, onSort, right = true, title }: {
+  label: string; k: SortKey; sortKey: SortKey; sortDir: SortDir; onSort: (k: SortKey) => void; right?: boolean; title?: string;
 }) {
   const active = sortKey === k;
   return (
-    <th className={`p-3 font-medium whitespace-nowrap ${right ? "text-right" : ""}`}>
+    <th className={`p-3 font-medium whitespace-nowrap ${right ? "text-right" : ""}`} title={title}>
       <button onClick={() => onSort(k)}
         className={`inline-flex items-center gap-0.5 transition-colors ${active ? "text-cyan" : "text-muted-foreground hover:text-foreground"}`}>
         {label}
@@ -278,7 +278,7 @@ function DashboardPage() {
             <div className="flex items-center gap-2.5"><Activity className="h-5 w-5 text-cyan" />
               <h1 className="font-display text-2xl font-bold tracking-tight">Dashboard</h1></div>
             <p className="mt-1 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
-              {totalFunds.toLocaleString()} Direct-Growth funds · 7-Pillar Engine Score · Category-relative
+              {totalFunds.toLocaleString()} Direct-Growth funds · Category-Based Fund Score · Category-relative
             </p>
           </div>
           <DataSourceBadge source="AMFI + mfapi.in" asOf={asOf} />
@@ -304,8 +304,9 @@ function DashboardPage() {
         {/* Methodology strip */}
         <div className="rounded-xl border border-border bg-surface/60 px-4 py-3">
           <p className="font-mono text-[10px] leading-relaxed text-muted-foreground">
-            <span className="font-bold text-cyan">Engine Score</span> — 7-pillar, category-relative:
-            LT Consistency <span className="text-foreground">23%</span> · Risk-Adjusted <span className="text-foreground">20%</span> · Downside Prot. <span className="text-foreground">20%</span> · Cost Efficiency <span className="text-foreground">15%</span> · Portfolio Quality <span className="text-foreground">12%</span> · Short-Term <span className="text-foreground">5%</span> · Management <span className="text-foreground">5%</span>
+            <span className="font-bold text-cyan">Fund Score</span> — category-based, category-relative:
+            Risk <span className="text-foreground">30%</span> · Performance <span className="text-foreground">25%</span> · Consistency <span className="text-foreground">20%</span> · Benchmark Skill <span className="text-foreground">10%</span> · Portfolio Quality <span className="text-foreground">10%</span> (Data Not Available) · Manager Quality <span className="text-foreground">5%</span> (Data Not Available)
+            &nbsp;·&nbsp;Unavailable categories' weight is redistributed proportionally — never faked
             &nbsp;·&nbsp;<span className="font-bold text-cyan">Avg Cal-Yr Ret</span> = mean of each calendar year's return · <span className="font-bold text-cyan">Rolling 1Y Avg</span> = mean of every rolling 1Y return window
             &nbsp;·&nbsp;<span className="font-bold text-cyan">Fund Size</span> = AUM in ₹ Cr via Kuvera (loaded after scoring)
           </p>
@@ -323,7 +324,7 @@ function DashboardPage() {
                     <th className="w-10 p-3 text-center font-medium">Sno</th>
                     <SortTh label="Fund Name" k="schemeName" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} right={false} />
                     <SortTh label="Category" k="poolCategory" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} right={false} />
-                    <SortTh label="Score" k="finalScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    <SortTh label="Fund Score" k="finalScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                     <SortTh label="NAV ₹" k="nav" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                     <SortTh label="Fund Size" k="aum" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="AUM via Kuvera — loaded after scoring completes" />
                     <SortTh label="Avg Cal-Yr Ret" k="annualReturnAvg" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
