@@ -149,7 +149,7 @@ function Rankings() {
           <p className="mb-2 font-mono text-[9px] uppercase tracking-widest text-cyan font-bold">Composite Ranking Score (0–100)</p>
           <div className="flex flex-wrap gap-x-5 gap-y-1 font-mono text-[9px] text-muted-foreground">
             <span><span className="text-foreground">Ranking Score</span> = Fund 50% + Return 30% + Explore 20%</span>
-            <span><span className="text-foreground">Fund Score</span> = category-based weighted blend of Risk(30%) + Performance(25%) + Consistency(20%) + Benchmark Skill(10%), redistributed across Portfolio/Manager Quality (Data Not Available)</span>
+            <span><span className="text-foreground">Fund Score</span> = fixed weights: Performance(40%) + Consistency(30%) + Risk(20%) + Benchmark Skill(10%) — category-relative, within same category only</span>
             <span><span className="text-foreground">Return Score</span> = ST(1D+1W+1M+3M+6M) × 30% + LT(Rolling 1Y/3Y/5Y/7Y) × 70%</span>
             <span><span className="text-foreground">Explore Score</span> = Sharpe 20% + Sortino 15% + Alpha 15% + IR 15% + RAR 15% + Captures 20%</span>
           </div>
@@ -179,7 +179,7 @@ function Rankings() {
                   <SortTh label="Fund" k="schemeName" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} right={false} />
                   <SortTh label="Category" k="poolCategory" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} right={false} />
                   <SortTh label="Ranking Score" k="rankingScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} accent title="Fund(50%)+Return(30%)+Explore(20%)" />
-                  <SortTh label="Fund Score" k="engineScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Category-based Fund Score (Risk/Performance/Consistency/Benchmark Skill)" />
+                  <SortTh label="Fund Score" k="engineScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Fixed-weight Fund Score: Performance(40%) + Consistency(30%) + Risk(20%) + Benchmark Skill(10%)" />
                   <SortTh label="Return" k="returnScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="ST×30%+LT×70% rolling returns" />
                   <SortTh label="Explore" k="exploreScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Ratio-based: Sharpe/Sortino/Alpha/IR/RAR/Captures" />
                 </tr>
@@ -221,7 +221,8 @@ function Rankings() {
         <p className="text-[10px] leading-relaxed text-muted-foreground">
           <span className="text-foreground">Ranking Score</span> = Fund Score × 50% + Return Score × 30% + Explore Score × 20%.
           All sub-scores are 0–100 percentile-relative within category peers.
-          Fund Score = category-based weighted blend (Risk, Performance, Consistency, Benchmark Skill) — see Methodology for the full breakdown.
+          Fund Score uses fixed weights: Performance 40% · Consistency 30% · Risk 20% · Benchmark Skill 10%.
+          Portfolio Quality and Manager Quality have been removed from scoring until real data is available.
         </p>
       </div>
     </AppShell>

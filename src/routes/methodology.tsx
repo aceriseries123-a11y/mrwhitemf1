@@ -95,6 +95,7 @@ const TOC_ITEMS = [
   { id: "data-sources",     label: "1. Data Sources" },
   { id: "eligibility",      label: "2. Eligibility Rules" },
   { id: "fund-score",       label: "3. Fund Score" },
+  { id: "penalties",        label: "   • Penalty System" },
   { id: "confidence-score", label: "   • Confidence Score" },
   { id: "rating-bands",     label: "   • Rating Bands" },
   { id: "dashboard",        label: "4. Dashboard Page" },
@@ -223,24 +224,24 @@ function MethodologyPage() {
                 </p>
                 <Formula
                   label="Step 1 — Percentile rank (how each metric is converted to 0–100)"
-                  expr={`percentileRank(fund_value, all_peer_values) =\n  (count where peer < fund_value\n   + 0.5 × count where peer = fund_value)\n  / total_peers × 100\n\nFor LOWER-IS-BETTER metrics (Max Drawdown, Downside Capture, Tracking Error):\n  score = 100 − percentileRank\n\nIf a metric is null for a fund, or fewer than 2 peers have a value,\nthat metric is excluded and its weight is redistributed within its category.`}
+                  expr={`percentileRank(fund_value, all_peer_values) =\n  (count where peer < fund_value\n   + 0.5 × count where peer = fund_value)\n  / total_peers × 100\n\nFor LOWER-IS-BETTER metrics (Max Drawdown, Downside Capture):\n  score = 100 − percentileRank\n\nIf a metric is null for a fund, or fewer than 2 peers have a value,\nthat metric's weight is redistributed proportionally within its own\ncategory (e.g., if 5Y Mean Rolling is null, its 12/25 weight shifts\nto the other Performance metrics). Category-to-category weights\nremain FIXED — no cross-category redistribution.`}
                 />
                 <div className="mt-3 space-y-1">
-                  <p className="font-mono text-[9px] uppercase tracking-widest text-cyan font-bold mb-2">Category Weights (sum to 100%)</p>
-                  <Row label="Risk" weight="30%" desc="Sharpe Ratio(8) + Sortino Ratio(8) + Maximum Drawdown(8, lower=better) + Downside Capture(6, lower=better)." source="mfapi.in NAV history + RBI RFR" />
-                  <Row label="Performance" weight="25%" desc="3Y Mean Rolling Return(8) + 5Y Mean Rolling Return(12) + Median Rolling Return(5). NOT 1Y return, NOT YTD, NOT simple trailing-return ranking." source="mfapi.in NAV history" />
-                  <Row label="Consistency" weight="20%" desc="Benchmark Outperformance Frequency(8) + Peer Outperformance Frequency(7) + Quartile Consistency(5)." source="mfapi.in NAV + category benchmark" />
-                  <Row label="Benchmark Skill" weight="10%" desc="Information Ratio(6) + Alpha(4)." source="mfapi.in NAV + category benchmark" />
-                  <Row label="Portfolio Quality" weight="10%" desc="Concentration(4) + Sector Concentration(3) + Turnover(3). Portfolio holdings data is not available from AMFI/mfapi.in." source="Not Available" />
-                  <Row label="Manager Quality" weight="5%" desc="Manager Tenure(3) + Manager Stability(2). Manager-tenure data is not available from AMFI/mfapi.in." source="Not Available" />
+                  <p className="font-mono text-[9px] uppercase tracking-widest text-cyan font-bold mb-2">Fixed Category Weights (sum to 100%)</p>
+                  <Row label="Performance" weight="40%" desc="3Y Mean Rolling Return(8) + 5Y Mean Rolling Return(12) + Median Rolling Return(5). The highest priority category — long-term rolling performance dominates rankings. NOT 1Y return, NOT YTD, NOT simple trailing-return ranking." source="mfapi.in NAV history" />
+                  <Row label="Consistency" weight="30%" desc="Benchmark Outperformance Frequency(8) + Peer Outperformance Frequency(7) + Quartile Consistency(5). Rewards repeatable, not just lucky, performance." source="mfapi.in NAV + category benchmark" />
+                  <Row label="Risk" weight="20%" desc="Sharpe Ratio(8) + Sortino Ratio(8) + Maximum Drawdown(8, lower=better) + Downside Capture(6, lower=better). Acts as a quality filter rather than the primary driver." source="mfapi.in NAV history + RBI RFR" />
+                  <Row label="Benchmark Skill" weight="10%" desc="Information Ratio(6) + Alpha(4). Rewards consistent benchmark outperformance." source="mfapi.in NAV + category benchmark" />
+                  <Row label="Portfolio Quality" weight="Coming Soon" desc="Removed from scoring until real portfolio-holdings data is available. Shown as 'Coming Soon' on fund pages." source="Not Available" />
+                  <Row label="Manager Quality" weight="Coming Soon" desc="Removed from scoring until real manager-tenure data is available. Shown as 'Coming Soon' on fund pages." source="Not Available" />
                 </div>
-                <Note type="warn">
-                  <strong>Portfolio Quality and Manager Quality are marked "Data Not Available"</strong>, not estimated or faked. Their combined 15% weight is redistributed <span className="text-foreground font-semibold">proportionally</span> across the four available categories (Risk, Performance, Consistency, Benchmark Skill), which together sum to 85% — each available category's effective weight is scaled by 100/85.
+                <Note type="info">
+                  <strong>Portfolio Quality and Manager Quality have been removed from scoring entirely</strong> until real portfolio-holdings and manager-tenure data is available from a reliable source. They appear as "Coming Soon – awaiting reliable data source" on fund pages. The four active categories always sum to exactly 100% — no redistribution needed.
                 </Note>
                 <Formula
-                  label="Step 2 — Category score → Fund Score"
-                  expr={`For each available category C:\n  categoryScore(C) = Σ (metric_percentile × metric_weight) / Σ available metric_weights\n\nredistributionFactor = (Σ all category weights) / (Σ available category weights)\n                     = 100% / 85%   (when Portfolio Quality + Manager Quality unavailable)\n\nFund Score = round( Σ categoryScore(C) × categoryWeight(C) × redistributionFactor )\n\nRange: 0–100. Deterministic and reproducible — same NAV data always\nproduces the same Fund Score, with no randomness or hidden adjustments.`}
-                  notes="Performance metrics use rolling-window means and medians (NOT simple trailing 1Y/YTD returns), per the methodology requirement that long-horizon consistency matters more than recent performance."
+                  label="Step 2 — Category score → Fund Score (fixed weights)"
+                  expr={`For each category C:\n  categoryScore(C) = Σ (metric_percentile × metric_weight) / Σ available metric_weights\n\n  If a metric within a category is null, its weight shifts to the other\n  metrics within that same category only.\n\nFund Score = round(\n  performanceScore × 0.40 +\n  consistencyScore × 0.30 +\n  riskScore        × 0.20 +\n  benchmarkScore   × 0.10\n)\n\nIf a category has no computable peer data, it falls back to 50 (neutral)\n— category weights are NEVER changed.\n\nAfter scoring, PENALTIES are applied:\n  Bottom 10% Max Drawdown in category: −5 pts\n  Bottom 10% Sortino Ratio in category: −5 pts\n\nFund Score = clamp(round(weightedScore − totalPenalties), 0, 100)\n\nDeterministic and reproducible — same NAV data always produces the\nsame Fund Score, with no randomness or hidden adjustments.`}
+                  notes="Performance metrics use rolling-window means and medians (NOT simple trailing 1Y/YTD returns). A fund that scores well on Performance and Consistency will dominate rankings — this is by design."
                 />
               </Card>
 
@@ -261,6 +262,26 @@ function MethodologyPage() {
                     expr={`quartileConsistency = percentileRank(\n  fund.rollingReturn3yAvg,\n  peers[].rollingReturn3yAvg\n)\n\nMeasures whether the fund's typical 3-year return places it consistently\nin the upper half of its category's return distribution.`}
                   />
                 </div>
+              </Card>
+            </Section>
+
+            {/* ── PENALTY SYSTEM ─────────────────────────────────────────── */}
+            <Section id="penalties" title="Penalty System" tag="Core">
+              <Card>
+                <p className="font-mono text-[10px] text-muted-foreground mb-3 leading-relaxed">
+                  Penalties are applied <span className="text-foreground font-semibold">after</span> the weighted category score is computed. A fund that lands in the worst decile on a key risk metric receives a point deduction regardless of other strengths. Penalties are designed to act as a floor — preventing a fund with catastrophic risk characteristics from ranking highly on performance alone.
+                </p>
+                <div className="space-y-1">
+                  <Row label="Bottom 10% Max Drawdown" weight="−5 pts" desc="This fund's Max Drawdown is worse than 90% of its category peers. Applied when the lower-is-better percentile rank of MaxDD is < 10 within the category." source="mfapi.in NAV history" />
+                  <Row label="Bottom 10% Sortino Ratio" weight="−5 pts" desc="This fund's Sortino Ratio is worse than 90% of its category peers. Applied when the higher-is-better percentile rank of Sortino is < 10 within the category." source="mfapi.in NAV + RBI RFR" />
+                </div>
+                <Note type="info">
+                  Both penalties can apply simultaneously, giving a maximum deduction of 10 points. Penalties are shown explicitly on the fund page so the user can see exactly why a fund's score was reduced. Additional penalty rules can be configured in the future without changing the core scoring formula.
+                </Note>
+                <Formula
+                  label="Final Fund Score with penalties"
+                  expr={`Fund Score = clamp(\n  round(weightedCategoryScore − Σ appliedPenalties),\n  0, 100\n)\n\nExample:\n  weightedScore = 72.4\n  Penalties: Bottom 10% Sortino (−5)\n  Fund Score = round(72.4 − 5) = 67`}
+                />
               </Card>
             </Section>
 
@@ -455,7 +476,7 @@ function MethodologyPage() {
               <Card>
                 <Formula
                   label="Ranking Score — primary sort on Rankings page"
-                  expr={`rankingScore = Fund Score × 0.50\n             + Return Score  × 0.30\n             + Explore Score × 0.20\n\nReturn Score = ShortTerm × 0.30 + LongTerm × 0.70\n  ShortTerm = mean_percentile(1D×20%, 1W×20%, 1M×20%, 3M×20%, 6M×20%)\n  LongTerm  = mean_percentile(Rolling1Y×25%, Rolling3Y×25%, Rolling5Y×25%, Rolling7Y×25%)\n\nAll sub-scores are 0–100, category-relative percentile ranks.\n\nWeighting rationale:\n  50% Fund Score — the category-based methodology (Risk, Performance, Consistency, Benchmark Skill)\n  30% Return     — actual performance is what investors care about most\n  20% Explore    — additional ratio quality, prevents gaming with 2 metrics\n\nFund Score is mandatory — null Fund Score → null Ranking Score.`}
+                  expr={`rankingScore = Fund Score × 0.50\n             + Return Score  × 0.30\n             + Explore Score × 0.20\n\nReturn Score = ShortTerm × 0.30 + LongTerm × 0.70\n  ShortTerm = mean_percentile(1D×20%, 1W×20%, 1M×20%, 3M×20%, 6M×20%)\n  LongTerm  = mean_percentile(Rolling1Y×25%, Rolling3Y×25%, Rolling5Y×25%, Rolling7Y×25%)\n\nAll sub-scores are 0–100, category-relative percentile ranks.\n\nFund Score weights:\n  Performance 40% + Consistency 30% + Risk 20% + Benchmark Skill 10% = 100%\n  (Portfolio Quality & Manager Quality: Coming Soon — not in current scoring)\n\nFund Score is mandatory — null Fund Score → null Ranking Score.`}
                 />
                 <Note type="info">Rankings also shows the Fund Score's category breakdown (Risk, Performance, Consistency, Benchmark Skill, Portfolio Quality, Manager Quality) so you can see why a fund ranks where it does — see Section 3.</Note>
               </Card>
@@ -552,8 +573,8 @@ function MethodologyPage() {
             {/* ── 9. LIMITATIONS ─────────────────────────────────────────── */}
             <Section id="limitations" title="11. Known Limitations & Honest Gaps" tag="Trust">
               <div className="space-y-3">
-                <Note type="warn">
-                  <strong>Portfolio Quality (10% weight) & Manager Quality (5% weight)</strong>: Portfolio concentration, sector concentration, turnover, manager tenure, and manager stability are not available from AMFI/mfapi.in. Both categories are marked "Data Not Available" on every fund page; their combined 15% weight is redistributed proportionally across Risk, Performance, Consistency, and Benchmark Skill — never estimated or faked.
+                <Note type="info">
+                  <strong>Portfolio Quality & Manager Quality — Removed from Scoring</strong>: Portfolio concentration, sector concentration, turnover, manager tenure, and manager stability are not available from AMFI/mfapi.in. Rather than mark them "Data Not Available" and redistribute weight (which adds complexity), both categories have been <strong>removed entirely from scoring</strong> until a reliable data source becomes available. They are shown as "Coming Soon – awaiting reliable data source" on fund pages. The four active categories (Performance, Consistency, Risk, Benchmark Skill) sum to exactly 100%.
                 </Note>
                 <Note type="warn">
                   <strong>Fund Size (AUM)</strong>: Not available in public mfapi.in or AMFI NAVAll.txt. Requires AMC-level scraping or a paid vendor. Shows "—" everywhere.

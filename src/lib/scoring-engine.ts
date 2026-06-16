@@ -626,46 +626,70 @@ export interface PillarResult {
   available: boolean;
 }
 
+export interface PenaltyApplied {
+  label: string;
+  points: number;
+}
+
 export interface EngineScoreResult {
   fundScore:       number;
   confidenceScore: number;
   finalScore:      number;
   rating:          string;
   ratingColor:     string;
+  preScore:        number;
+  penalties:       PenaltyApplied[];
   pillars: {
-    risk:           PillarResult;
     performance:    PillarResult;
     consistency:    PillarResult;
+    risk:           PillarResult;
     benchmarkSkill: PillarResult;
-    portfolioQuality: PillarResult;
-    managerQuality:   PillarResult;
   };
 }
 
+export interface PenaltyRule {
+  label: string;
+  points: number;
+  test: (m: EngineMetrics, peers: EngineMetrics[]) => boolean;
+}
+
+export const PENALTY_RULES: PenaltyRule[] = [
+  {
+    label: "Bottom 10% Max Drawdown",
+    points: 5,
+    test: (m, peers) => {
+      if (m.maxDrawdown == null) return false;
+      const valid = peers.map(p => p.maxDrawdown).filter((x): x is number => x != null);
+      if (valid.length <= 1) return false;
+      return percentileOf(valid, m.maxDrawdown, true) < 10;
+    },
+  },
+  {
+    label: "Bottom 10% Sortino Ratio",
+    points: 5,
+    test: (m, peers) => {
+      if (m.sortino == null) return false;
+      const valid = peers.map(p => p.sortino).filter((x): x is number => x != null);
+      if (valid.length <= 1) return false;
+      return percentileOf(valid, m.sortino, false) < 10;
+    },
+  },
+];
+
 /**
- * QuantFund v6 category-based scoring methodology.
+ * QuantFund v7 — fixed-weight, category-based scoring.
  *
- * Every metric is converted into a percentile rank (0-100) within the same
- * category's peer set before being weighted. Category scores are then
- * combined into the Fund Score using the weights below.
+ *   Performance   40%   3Y Mean Rolling(8) + 5Y Mean Rolling(12) + Median Rolling(5)
+ *   Consistency   30%   Benchmark Beat Rate(8) + Peer Beat Rate(7) + Quartile Consistency(5)
+ *   Risk          20%   Sharpe(8) + Sortino(8) + MaxDD(8,lower) + DownsideCapture(6,lower)
+ *   Benchmark     10%   Information Ratio(6) + Alpha(4)
  *
- *   Category            Weight   Metrics (internal weighting)
- *   ──────────────────────────────────────────────────────────────────────
- *   Risk                 30%     Sharpe(8) + Sortino(8) + MaxDD(8) + DownsideCapture(6)
- *   Performance          25%     3Y Mean Rolling(8) + 5Y Mean Rolling(12) + Median Rolling(5)
- *   Consistency          20%     Benchmark Outperformance(8) + Peer Outperformance(7) + Quartile Consistency(5)
- *   Benchmark Skill      10%     Information Ratio(6) + Alpha(4)
- *   Portfolio Quality    10%     Not available from AMFI/mfapi.in — marked unavailable
- *   Manager Quality       5%     Not available from AMFI/mfapi.in — marked unavailable
+ * Weights are FIXED — no dynamic redistribution.
+ * Portfolio Quality and Manager Quality are REMOVED until real data exists.
+ * Penalties are applied after the weighted score is computed.
  *
- * Portfolio Quality and Manager Quality (combined 15%) are not computable from
- * NAV history alone. Per the "never fake data" requirement, both are marked
- * `available: false` and excluded from the Fund Score; their combined weight
- * is redistributed proportionally across the four available categories.
- *
- * Fund Score = round(Σ categoryScore × redistributedWeight), range 0-100.
- * Confidence Score is computed separately and NEVER combined into Fund Score.
- * finalScore === fundScore (kept distinct from confidenceScore for display).
+ * Fund Score = clamp(round(weighted_score − Σ penalties), 0, 100)
+ * Confidence Score is NEVER combined with Fund Score.
  */
 export function scoreWithPeers(
   m: EngineMetrics,
@@ -678,7 +702,6 @@ export function scoreWithPeers(
     return percentileOf(valid, v, lower);
   };
 
-  /** Weighted average of percentile components; returns null if none available. */
   const weighted = (comps: { p: number | null; w: number }[]): number | null => {
     let sum = 0, totalW = 0;
     for (const { p, w } of comps) {
@@ -689,22 +712,14 @@ export function scoreWithPeers(
     return totalW > 0 ? sum / totalW : null;
   };
 
-  // ─── Risk (30%) — Sharpe(8) + Sortino(8) + MaxDD(8, lower=better) + DownsideCapture(6, lower=better)
-  const riskScore = weighted([
-    { p: pct(m.sharpe,          peers.map(p => p.sharpe)),                  w: 8 },
-    { p: pct(m.sortino,         peers.map(p => p.sortino)),                 w: 8 },
-    { p: pct(m.maxDrawdown,     peers.map(p => p.maxDrawdown),     true),   w: 8 },
-    { p: pct(m.downsideCapture, peers.map(p => p.downsideCapture), true),   w: 6 },
-  ]);
-
-  // ─── Performance (25%) — 3Y Mean Rolling(8) + 5Y Mean Rolling(12) + Median Rolling(5)
+  // ─── Performance (40%)
   const performanceScore = weighted([
-    { p: pct(m.rollingReturn3yAvg,    peers.map(p => p.rollingReturn3yAvg)),    w: 8 },
+    { p: pct(m.rollingReturn3yAvg,    peers.map(p => p.rollingReturn3yAvg)),    w: 8  },
     { p: pct(m.rollingReturn5yAvg,    peers.map(p => p.rollingReturn5yAvg)),    w: 12 },
-    { p: pct(m.medianRollingReturn3y, peers.map(p => p.medianRollingReturn3y)), w: 5 },
+    { p: pct(m.medianRollingReturn3y, peers.map(p => p.medianRollingReturn3y)), w: 5  },
   ]);
 
-  // ─── Consistency (20%) — Benchmark Outperformance Freq(8) + Peer Outperformance Freq(7) + Quartile Consistency(5)
+  // ─── Consistency (30%)
   const peerBeatRate = (() => {
     const peerVals = peers.map(p => p.rollingReturn3yAvg).filter((x): x is number => x != null);
     if (m.rollingReturn3yAvg == null || peerVals.length <= 1) return null;
@@ -712,14 +727,7 @@ export function scoreWithPeers(
     return (beaten / peerVals.length) * 100;
   })();
 
-  // Quartile Consistency — % of rolling 3Y windows landing in the top half (above median)
-  // of this fund's own rolling-return distribution that ALSO beat the category median
-  // rolling 3Y return. Approximated via: this fund's rolling 3Y mean vs the category's
-  // median rolling 3Y mean, percentile-ranked across peers.
-  const quartileConsistency = pct(
-    m.rollingReturn3yAvg,
-    peers.map(p => p.rollingReturn3yAvg),
-  );
+  const quartileConsistency = pct(m.rollingReturn3yAvg, peers.map(p => p.rollingReturn3yAvg));
 
   const consistencyScore = weighted([
     { p: m.consistencyBeatRate != null ? m.consistencyBeatRate * 100 : null, w: 8 },
@@ -727,58 +735,38 @@ export function scoreWithPeers(
     { p: quartileConsistency,                                                 w: 5 },
   ]);
 
-  // ─── Benchmark Skill (10%) — Information Ratio(6) + Alpha(4)
-  const benchmarkSkillScore = weighted([
-    { p: pct(m.informationRatio, peers.map(p => p.informationRatio)), w: 6 },
-    { p: pct(m.longRunAlpha,      peers.map(p => p.longRunAlpha)),     w: 4 },
+  // ─── Risk (20%)
+  const riskScore = weighted([
+    { p: pct(m.sharpe,          peers.map(p => p.sharpe)),                  w: 8 },
+    { p: pct(m.sortino,         peers.map(p => p.sortino)),                 w: 8 },
+    { p: pct(m.maxDrawdown,     peers.map(p => p.maxDrawdown),     true),   w: 8 },
+    { p: pct(m.downsideCapture, peers.map(p => p.downsideCapture), true),   w: 6 },
   ]);
 
-  // ─── Portfolio Quality (10%) & Manager Quality (5%) — not derivable from NAV history
-  const portfolioQualityScore: number | null = null;
-  const managerQualityScore: number | null = null;
+  // ─── Benchmark Skill (10%)
+  const benchmarkSkillScore = weighted([
+    { p: pct(m.informationRatio, peers.map(p => p.informationRatio)), w: 6 },
+    { p: pct(m.longRunAlpha,     peers.map(p => p.longRunAlpha)),     w: 4 },
+  ]);
 
-  // Base category weights per spec
-  const CATEGORY_WEIGHTS = {
-    risk: 0.30,
-    performance: 0.25,
-    consistency: 0.20,
-    benchmarkSkill: 0.10,
-    portfolioQuality: 0.10,
-    managerQuality: 0.05,
-  };
+  // Fixed weights — no redistribution
+  const W = { performance: 0.40, consistency: 0.30, risk: 0.20, benchmarkSkill: 0.10 };
 
-  const categoryScores: Record<keyof typeof CATEGORY_WEIGHTS, number | null> = {
-    risk: riskScore,
-    performance: performanceScore,
-    consistency: consistencyScore,
-    benchmarkSkill: benchmarkSkillScore,
-    portfolioQuality: portfolioQualityScore,
-    managerQuality: managerQualityScore,
-  };
+  const preScore =
+    (performanceScore    ?? 50) * W.performance +
+    (consistencyScore    ?? 50) * W.consistency  +
+    (riskScore           ?? 50) * W.risk         +
+    (benchmarkSkillScore ?? 50) * W.benchmarkSkill;
 
-  // Redistribute weight of unavailable categories proportionally across available ones
-  let availableWeight = 0;
-  let unavailableWeight = 0;
-  for (const key of Object.keys(CATEGORY_WEIGHTS) as (keyof typeof CATEGORY_WEIGHTS)[]) {
-    if (categoryScores[key] != null) availableWeight += CATEGORY_WEIGHTS[key];
-    else unavailableWeight += CATEGORY_WEIGHTS[key];
-  }
+  // Penalties
+  const penalties: PenaltyApplied[] = PENALTY_RULES
+    .filter(r => r.test(m, peers))
+    .map(r => ({ label: r.label, points: r.points }));
+  const totalPenalty = penalties.reduce((s, p) => s + p.points, 0);
 
-  let fundScore = 50; // neutral fallback if nothing is available
-  if (availableWeight > 0) {
-    const redistributionFactor = (availableWeight + unavailableWeight) / availableWeight;
-    let sum = 0;
-    for (const key of Object.keys(CATEGORY_WEIGHTS) as (keyof typeof CATEGORY_WEIGHTS)[]) {
-      const score = categoryScores[key];
-      if (score == null) continue;
-      sum += score * CATEGORY_WEIGHTS[key] * redistributionFactor;
-    }
-    fundScore = Math.round(sum);
-  }
-
-  const conf = computeConfidenceScore(m);
-  // Fund Score and Confidence Score are kept separate — finalScore === fundScore.
+  const fundScore  = Math.round(Math.max(0, Math.min(100, preScore - totalPenalty)));
   const finalScore = fundScore;
+  const conf       = computeConfidenceScore(m);
   const { rating, color } = getRating(finalScore);
 
   return {
@@ -787,13 +775,13 @@ export function scoreWithPeers(
     finalScore,
     rating,
     ratingColor: color,
+    preScore,
+    penalties,
     pillars: {
-      risk:             { rawScore: riskScore ?? 0,           weight: CATEGORY_WEIGHTS.risk * 100,             label: "Risk",               available: riskScore != null },
-      performance:      { rawScore: performanceScore ?? 0,    weight: CATEGORY_WEIGHTS.performance * 100,      label: "Performance",        available: performanceScore != null },
-      consistency:      { rawScore: consistencyScore ?? 0,    weight: CATEGORY_WEIGHTS.consistency * 100,      label: "Consistency",        available: consistencyScore != null },
-      benchmarkSkill:   { rawScore: benchmarkSkillScore ?? 0,  weight: CATEGORY_WEIGHTS.benchmarkSkill * 100,   label: "Benchmark Skill",    available: benchmarkSkillScore != null },
-      portfolioQuality: { rawScore: 0,                         weight: CATEGORY_WEIGHTS.portfolioQuality * 100, label: "Portfolio Quality",  available: false },
-      managerQuality:   { rawScore: 0,                         weight: CATEGORY_WEIGHTS.managerQuality * 100,   label: "Manager Quality",    available: false },
+      performance:    { rawScore: performanceScore    ?? 50, weight: W.performance    * 100, label: "Performance",     available: performanceScore    != null },
+      consistency:    { rawScore: consistencyScore    ?? 50, weight: W.consistency    * 100, label: "Consistency",     available: consistencyScore    != null },
+      risk:           { rawScore: riskScore           ?? 50, weight: W.risk           * 100, label: "Risk",            available: riskScore           != null },
+      benchmarkSkill: { rawScore: benchmarkSkillScore ?? 50, weight: W.benchmarkSkill * 100, label: "Benchmark Skill", available: benchmarkSkillScore != null },
     },
   };
 }
@@ -805,13 +793,6 @@ export interface StrengthsWeaknesses {
   weaknesses: string[];
 }
 
-/**
- * Strengths are categories scoring ≥ 70 (top-quartile-ish percentile),
- * weaknesses are categories scoring < 50 (below category median).
- * Unavailable categories (Portfolio Quality, Manager Quality without data)
- * are excluded from both lists — they are shown separately as
- * "Data Not Available" in the UI.
- */
 export function getStrengthsWeaknesses(
   pillars: EngineScoreResult["pillars"],
 ): StrengthsWeaknesses {

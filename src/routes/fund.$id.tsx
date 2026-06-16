@@ -90,6 +90,20 @@ function MetricRow({ label, value, tone }: { label: string; value: string; tone?
   );
 }
 
+function ComingSoonRow({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="w-[160px] shrink-0">
+        <span className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/50 leading-tight">{label}</span>
+      </div>
+      <div className="flex flex-1 items-center gap-2">
+        <div className="h-1 flex-1 overflow-hidden rounded-full bg-border opacity-10" />
+        <span className="font-mono text-[8px] uppercase tracking-wider text-muted-foreground/50 italic">Coming Soon</span>
+      </div>
+    </div>
+  );
+}
+
 function PillarBar({ label, score, weight, available = true }: {
   label: string; score: number; weight: number; available?: boolean;
 }) {
@@ -398,7 +412,7 @@ function FundPage() {
                     Loading {peersLoaded}/{peersTotal} category peers…
                   </span>
                 ) : null}
-                <InfoBadge text="Every metric is converted to a percentile rank within the same category before weighting. A category score of 80 means this fund outranks ~80% of its category peers on that category. Portfolio Quality and Manager Quality are marked Data Not Available — holdings and manager-tenure data are not available from AMFI/mfapi.in, so their weight is not faked." />
+                <InfoBadge text="Every metric is percentile-ranked within the same category before weighting. Fixed weights: Performance 40% · Consistency 30% · Risk 20% · Benchmark Skill 10%. Portfolio Quality and Manager Quality have been removed from scoring until real holdings and manager-tenure data is available — they appear as Coming Soon below." />
               </div>
 
               {!sr ? (
@@ -476,12 +490,25 @@ function FundPage() {
                   {/* Right: category breakdown */}
                   <div className="space-y-1.5">
                     <p className="mb-2 font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground">Category Breakdown</p>
-                    <PillarBar label="Risk"              score={sr.pillars.risk.rawScore}             weight={30} available={sr.pillars.risk.available} />
-                    <PillarBar label="Performance"       score={sr.pillars.performance.rawScore}      weight={25} available={sr.pillars.performance.available} />
-                    <PillarBar label="Consistency"       score={sr.pillars.consistency.rawScore}      weight={20} available={sr.pillars.consistency.available} />
-                    <PillarBar label="Benchmark Skill"   score={sr.pillars.benchmarkSkill.rawScore}   weight={10} available={sr.pillars.benchmarkSkill.available} />
-                    <PillarBar label="Portfolio Quality" score={sr.pillars.portfolioQuality.rawScore} weight={10} available={sr.pillars.portfolioQuality.available} />
-                    <PillarBar label="Manager Quality"   score={sr.pillars.managerQuality.rawScore}   weight={5}  available={sr.pillars.managerQuality.available} />
+                    <PillarBar label="Performance"     score={sr.pillars.performance.rawScore}    weight={40} available={sr.pillars.performance.available} />
+                    <PillarBar label="Consistency"     score={sr.pillars.consistency.rawScore}    weight={30} available={sr.pillars.consistency.available} />
+                    <PillarBar label="Risk"            score={sr.pillars.risk.rawScore}           weight={20} available={sr.pillars.risk.available} />
+                    <PillarBar label="Benchmark Skill" score={sr.pillars.benchmarkSkill.rawScore} weight={10} available={sr.pillars.benchmarkSkill.available} />
+                    {/* Coming Soon rows — removed from scoring until real data available */}
+                    <ComingSoonRow label="Portfolio Quality" />
+                    <ComingSoonRow label="Manager Quality" />
+                    {/* Penalties panel */}
+                    {sr.penalties.length > 0 && (
+                      <div className="mt-2 rounded border border-warning/30 bg-warning/[0.05] px-2 py-1.5">
+                        <p className="mb-1 font-mono text-[8px] uppercase tracking-widest text-warning">Penalties Applied</p>
+                        {sr.penalties.map(p => (
+                          <div key={p.label} className="flex items-center justify-between">
+                            <span className="font-mono text-[9px] text-muted-foreground">{p.label}</span>
+                            <span className="font-mono text-[9px] font-bold text-warning">−{p.points} pts</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -566,9 +593,9 @@ function FundPage() {
               sourced from{" "}
               <a href="https://www.mfapi.in" target="_blank" rel="noopener noreferrer" className="text-cyan underline underline-offset-2">mfapi.in</a>
               {" "}(community mirror of AMFI). Risk-free rate assumed at 6.50% (91-day G-Sec T-Bill proxy).
-              Fund Score uses category-relative percentile ranking across {engineResult?.peersCount ?? peersTotal} direct-growth peers in {category ?? "this category"}, never compared across categories.
-              Portfolio Quality and Manager Quality are marked Data Not Available — portfolio holdings, sector exposure, turnover, and manager-tenure data are not available from AMFI/mfapi.in, so their combined 15% weight is redistributed across the four available categories rather than estimated. See the{" "}
-              <Link to="/methodology" className="text-cyan underline underline-offset-2">Methodology</Link> page for the full breakdown.
+              Fund Score uses fixed weights (Performance 40% · Consistency 30% · Risk 20% · Benchmark Skill 10%) with category-relative percentile ranking across {engineResult?.peersCount ?? peersTotal} direct-growth peers in {category ?? "this category"} — funds are never compared across categories.
+              Portfolio Quality and Manager Quality have been removed from scoring entirely until real portfolio-holdings and manager-tenure data is available from a reliable source. See the{" "}
+              <Link to="/methodology" className="text-cyan underline underline-offset-2">Methodology</Link> page for full details.
             </p>
           </>
         )}

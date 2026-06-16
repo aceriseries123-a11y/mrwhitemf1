@@ -304,9 +304,9 @@ function DashboardPage() {
         {/* Methodology strip */}
         <div className="rounded-xl border border-border bg-surface/60 px-4 py-3">
           <p className="font-mono text-[10px] leading-relaxed text-muted-foreground">
-            <span className="font-bold text-cyan">Fund Score</span> — category-based, category-relative:
-            Risk <span className="text-foreground">30%</span> · Performance <span className="text-foreground">25%</span> · Consistency <span className="text-foreground">20%</span> · Benchmark Skill <span className="text-foreground">10%</span> · Portfolio Quality <span className="text-foreground">10%</span> (Data Not Available) · Manager Quality <span className="text-foreground">5%</span> (Data Not Available)
-            &nbsp;·&nbsp;Unavailable categories' weight is redistributed proportionally — never faked
+            <span className="font-bold text-cyan">Fund Score</span> — fixed weights, category-relative percentile ranking:
+            Performance <span className="text-foreground">40%</span> · Consistency <span className="text-foreground">30%</span> · Risk <span className="text-foreground">20%</span> · Benchmark Skill <span className="text-foreground">10%</span>
+            &nbsp;·&nbsp;Portfolio Quality &amp; Manager Quality: <span className="text-muted-foreground italic">Coming Soon</span> (removed from scoring until real data available)
             &nbsp;·&nbsp;<span className="font-bold text-cyan">Avg Cal-Yr Ret</span> = mean of each calendar year's return · <span className="font-bold text-cyan">Rolling 1Y Avg</span> = mean of every rolling 1Y return window
             &nbsp;·&nbsp;<span className="font-bold text-cyan">Fund Size</span> = AUM in ₹ Cr via Kuvera (loaded after scoring)
           </p>
