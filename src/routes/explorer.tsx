@@ -33,7 +33,7 @@ const ALL_CATS: Array<"All" | QuantFundCategory> = [
   "All", ...(QUANTFUND_CATEGORIES.filter(c => c !== "Unknown") as QuantFundCategory[]),
 ];
 
-type SortKey = "schemeName" | "poolCategory" | "exploreScore" | "expenseRatio"
+type SortKey = "schemeName" | "poolCategory" | "exploreScore" | "aum"
   | "beta" | "stdDev" | "jensensAlpha" | "sharpe" | "sortino"
   | "upsideCapture" | "downsideCapture" | "informationRatio" | "riskAdjReturn";
 type SortDir = "asc" | "desc";
@@ -161,8 +161,8 @@ function FundExplorer() {
   const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
   useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
 
-  // Expense Ratio map: schemeCode → TER %
-  const [terMap, setTerMap] = useState<Map<string, number>>(new Map());
+  // AUM map: schemeCode → AUM in ₹ Cr
+  const [aumMap, setAumMap] = useState<Map<string, number>>(new Map());
   useEffect(() => {
     if (allRanked.length === 0) return;
     const codes = allRanked.map(f => f.schemeCode);
@@ -174,14 +174,14 @@ function FundExplorer() {
         if (cancelled) break;
         const batch = codes.slice(i, i + BATCH);
         try {
-          const res = await fetch(`/api/public/scheme-ter?codes=${batch.join(",")}`);
+          const res = await fetch(`/api/public/scheme-aum?codes=${batch.join(",")}`);
           if (res.ok) {
             const data = await res.json() as Record<string, number>;
             for (const [k, val] of Object.entries(data)) newMap.set(k, val);
           }
         } catch { /* best-effort */ }
       }
-      if (!cancelled) setTerMap(new Map(newMap));
+      if (!cancelled) setAumMap(new Map(newMap));
     };
     fetchAll();
     return () => { cancelled = true; };
@@ -215,7 +215,7 @@ function FundExplorer() {
       if (sortKey === "poolCategory") return dir * (a.poolCategory as string).localeCompare(b.poolCategory as string);
       const getV = (f: typeof a): number | null => {
         if (sortKey === "exploreScore")      return f.exploreScore;
-        if (sortKey === "expenseRatio")      return terMap.get(f.schemeCode) ?? null;
+        if (sortKey === "aum")               return aumMap.get(f.schemeCode) ?? null;
         if (sortKey === "beta")              return f.metrics.beta;
         if (sortKey === "stdDev")            return f.metrics.stdDev;
         if (sortKey === "jensensAlpha")      return f.metrics.jensensAlpha;
@@ -231,7 +231,7 @@ function FundExplorer() {
       if (va == null && vb == null) return 0; if (va == null) return 1; if (vb == null) return -1;
       return dir * (va - vb);
     });
-  }, [augmented, catFilter, search, sortKey, sortDir, terMap]);
+  }, [augmented, catFilter, search, sortKey, sortDir, aumMap]);
 
   if (allRanked.length === 0) return (
     <AppShell title="Explorer">
@@ -266,7 +266,7 @@ function FundExplorer() {
             <span><span className="text-cyan font-bold">Explore Score</span> = Sharpe(20%)+Sortino(15%)+Alpha(15%)+IR(15%)+RAR(15%)+Upside(10%)+Downside(10%)</span>
             <span><span className="text-positive font-bold">↑ Upside Cap</span> · full-green bar · <span className="text-positive">+1</span> if ≥100% (captured more rally than benchmark) · <span className="text-negative">-1</span> if &lt;100%</span>
             <span><span className="text-negative font-bold">↓ Downside Cap</span> · full-red bar · <span className="text-positive">+1</span> if ≤100% (fell less than benchmark) · <span className="text-negative">-1</span> if &gt;100%</span>
-            <span><span className="text-foreground">Exp. Ratio</span>: fetched from Kuvera via ISIN · may show "—" if unavailable</span>
+            <span><span className="text-foreground">Fund Size</span>: AUM in ₹ Cr fetched via Kuvera — loaded after scoring completes</span>
           </div>
         </div>
 
@@ -294,7 +294,7 @@ function FundExplorer() {
                   <th className="p-3 font-medium text-muted-foreground">Fund</th>
                   <th className="p-3 font-medium text-muted-foreground">Category</th>
                   <SortTh label="Explore Score" k="exploreScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} accent title="7-component ratio score 0-100 (category-relative)" />
-                  <SortTh label="Exp. Ratio" k="expenseRatio" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="TER % — fetched from Kuvera via ISIN" />
+                  <SortTh label="Fund Size" k="aum" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="AUM in ₹ Cr — fetched via Kuvera after scoring" />
                   <SortTh label="Beta" k="beta" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Market sensitivity vs category benchmark" />
                   <SortTh label="Std Dev" k="stdDev" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Annualised volatility of daily returns" />
                   <SortTh label="Alpha (J)" k="jensensAlpha" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Jensen's Alpha = fund 3Y CAGR − (RFR + β × (bm−RFR))" />
@@ -311,7 +311,6 @@ function FundExplorer() {
                   <tr><td colSpan={14} className="py-16 text-center font-mono text-[11px] uppercase tracking-widest text-muted-foreground">No funds match</td></tr>
                 ) : displayed.map((f, idx) => {
                   const m = f.metrics;
-                  const ter = terMap.get(f.schemeCode);
                   return (
                     <tr key={f.schemeCode} className="transition-colors hover:bg-cyan/[0.04]">
                       <td className="p-3 text-center font-mono text-[10px] tabular-nums text-muted-foreground">{idx + 1}</td>
@@ -322,11 +321,11 @@ function FundExplorer() {
                       </td>
                       <td className="p-3"><CategoryBadge cat={f.poolCategory as string} /></td>
                       <td className="p-3 text-right"><ScoreCell v={f.exploreScore} /></td>
-                      {/* Expense Ratio */}
+                      {/* Fund Size */}
                       <td className="p-3 text-right">
-                        {ter != null
-                          ? <span className={`font-mono text-[11px] tabular-nums ${ter < 1 ? "text-positive" : ter < 1.5 ? "text-foreground" : "text-negative"}`}>{ter.toFixed(2)}%</span>
-                          : <span className="font-mono text-[10px] text-muted-foreground" title="TER not yet loaded">—</span>}
+                        {(() => { const aum = aumMap.get(f.schemeCode); return aum != null
+                          ? <span className="font-mono text-[11px] tabular-nums text-foreground">{aum >= 10000 ? `₹${(aum/1000).toFixed(1)}K Cr` : aum >= 1000 ? `₹${(aum/1000).toFixed(2)}K Cr` : `₹${aum.toFixed(0)} Cr`}</span>
+                          : <span className="font-mono text-[10px] text-muted-foreground">—</span>; })()}
                       </td>
                       <td className="p-3 text-right">
                         {m.beta != null ? <span className={`font-mono text-[11px] tabular-nums ${m.beta < 0.8 ? "text-positive" : m.beta < 1.1 ? "text-foreground" : "text-negative"}`}>{fmtNum(m.beta, 2)}</span>
