@@ -199,38 +199,41 @@ function DashboardPage() {
   const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
   useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
 
-  // AUM fetch — parallel batches of 60, incremental updates, session-level in-memory cache
+  // AUM fetch — fires once after scoring is substantially complete (≥50 ranked funds
+  // and no new funds scored in the last 3 seconds). Parallel batches, single setState
+  // to avoid React state-race between concurrent updaters.
   const [aumMap, setAumMap] = useState<Map<string, number>>(new Map());
+  const aumFetchedRef = useRef(false);
   useEffect(() => {
-    if (allRanked.length === 0) return;
-    const codes = allRanked.map(f => f.schemeCode);
-    const BATCH = 60;
-    let cancelled = false;
+    if (allRanked.length < 50 || aumFetchedRef.current) return;
 
-    const fetchAll = async () => {
-      // Fire all batches in parallel — server caches results for 24h so repeated
-      // requests from the same edge node are near-instant on cache hits.
+    // Debounce: wait 3s of silence (no new funds scoring) before firing
+    const timer = setTimeout(async () => {
+      if (aumFetchedRef.current) return;
+      aumFetchedRef.current = true;
+
+      const codes = allRanked.map(f => f.schemeCode);
+      const BATCH = 60;
       const batches: string[][] = [];
       for (let i = 0; i < codes.length; i += BATCH) batches.push(codes.slice(i, i + BATCH));
 
+      // All batches in parallel; collect results into one object, single setState
+      const collected: Record<string, number> = {};
       await Promise.all(batches.map(async batch => {
         try {
           const res = await fetch(`/api/public/scheme-aum?codes=${batch.join(",")}`);
-          if (!res.ok || cancelled) return;
+          if (!res.ok) return;
           const data = await res.json() as Record<string, number>;
-          if (cancelled) return;
-          // Incremental update — merge each batch result into map as it arrives
-          setAumMap(prev => {
-            const next = new Map(prev);
-            for (const [k, v] of Object.entries(data)) next.set(k, v);
-            return next;
-          });
+          Object.assign(collected, data);
         } catch { /* best-effort */ }
       }));
-    };
 
-    fetchAll();
-    return () => { cancelled = true; };
+      if (Object.keys(collected).length > 0) {
+        setAumMap(new Map(Object.entries(collected)));
+      }
+    }, 3000);
+
+    return () => clearTimeout(timer);
   }, [allRanked.length]);
 
   const toggleSort = (k: SortKey) => {

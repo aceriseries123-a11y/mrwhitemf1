@@ -10,7 +10,7 @@
  * Expense Ratio: fetched from Kuvera via /api/public/scheme-ter.
  */
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { BarChart2, ChevronUp, ChevronDown, ChevronsUpDown, Search, X } from "lucide-react";
 import { fmtNum, fmtPct } from "@/lib/format";
 import { AppShell } from "@/components/AppShell";
@@ -161,32 +161,30 @@ function FundExplorer() {
   const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
   useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
 
-  // AUM map: schemeCode → AUM in ₹ Cr (parallel batches, incremental updates)
+  // AUM map: schemeCode → AUM in ₹ Cr — fires once after scoring settles, parallel batches
   const [aumMap, setAumMap] = useState<Map<string, number>>(new Map());
+  const aumFetchedRef = useRef(false);
   useEffect(() => {
-    if (allRanked.length === 0) return;
-    const codes = allRanked.map(f => f.schemeCode);
-    const BATCH = 60;
-    let cancelled = false;
-    const fetchAll = async () => {
+    if (allRanked.length < 50 || aumFetchedRef.current) return;
+    const timer = setTimeout(async () => {
+      if (aumFetchedRef.current) return;
+      aumFetchedRef.current = true;
+      const codes = allRanked.map(f => f.schemeCode);
+      const BATCH = 60;
       const batches: string[][] = [];
       for (let i = 0; i < codes.length; i += BATCH) batches.push(codes.slice(i, i + BATCH));
+      const collected: Record<string, number> = {};
       await Promise.all(batches.map(async batch => {
         try {
           const res = await fetch(`/api/public/scheme-aum?codes=${batch.join(",")}`);
-          if (!res.ok || cancelled) return;
+          if (!res.ok) return;
           const data = await res.json() as Record<string, number>;
-          if (cancelled) return;
-          setAumMap(prev => {
-            const next = new Map(prev);
-            for (const [k, v] of Object.entries(data)) next.set(k, v);
-            return next;
-          });
+          Object.assign(collected, data);
         } catch { /* best-effort */ }
       }));
-    };
-    fetchAll();
-    return () => { cancelled = true; };
+      if (Object.keys(collected).length > 0) setAumMap(new Map(Object.entries(collected)));
+    }, 3000);
+    return () => clearTimeout(timer);
   }, [allRanked.length]);
 
   const catPeersMap = useMemo(() => {
