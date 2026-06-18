@@ -161,7 +161,7 @@ function FundExplorer() {
   const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
   useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
 
-  // AUM map: schemeCode → AUM in ₹ Cr
+  // AUM map: schemeCode → AUM in ₹ Cr (parallel batches, incremental updates)
   const [aumMap, setAumMap] = useState<Map<string, number>>(new Map());
   useEffect(() => {
     if (allRanked.length === 0) return;
@@ -169,19 +169,21 @@ function FundExplorer() {
     const BATCH = 60;
     let cancelled = false;
     const fetchAll = async () => {
-      const newMap = new Map<string, number>();
-      for (let i = 0; i < codes.length; i += BATCH) {
-        if (cancelled) break;
-        const batch = codes.slice(i, i + BATCH);
+      const batches: string[][] = [];
+      for (let i = 0; i < codes.length; i += BATCH) batches.push(codes.slice(i, i + BATCH));
+      await Promise.all(batches.map(async batch => {
         try {
           const res = await fetch(`/api/public/scheme-aum?codes=${batch.join(",")}`);
-          if (res.ok) {
-            const data = await res.json() as Record<string, number>;
-            for (const [k, val] of Object.entries(data)) newMap.set(k, val);
-          }
+          if (!res.ok || cancelled) return;
+          const data = await res.json() as Record<string, number>;
+          if (cancelled) return;
+          setAumMap(prev => {
+            const next = new Map(prev);
+            for (const [k, v] of Object.entries(data)) next.set(k, v);
+            return next;
+          });
         } catch { /* best-effort */ }
-      }
-      if (!cancelled) setAumMap(new Map(newMap));
+      }));
     };
     fetchAll();
     return () => { cancelled = true; };
