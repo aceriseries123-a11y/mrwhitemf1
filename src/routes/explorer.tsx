@@ -161,7 +161,7 @@ function FundExplorer() {
   const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
   useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
 
-  // AUM map: schemeCode → AUM in ₹ Cr — fires once after scoring settles, parallel batches
+  // AUM map — uses ISINs from RankedFund (no extra mfapi lookup needed)
   const [aumMap, setAumMap] = useState<Map<string, number>>(new Map());
   const aumFetchedRef = useRef(false);
   useEffect(() => {
@@ -169,17 +169,23 @@ function FundExplorer() {
     const timer = setTimeout(async () => {
       if (aumFetchedRef.current) return;
       aumFetchedRef.current = true;
-      const codes = allRanked.map(f => f.schemeCode);
-      const BATCH = 60;
+      const pairs = allRanked
+        .filter(f => f.isin && f.isin.startsWith("INF"))
+        .map(f => ({ code: f.schemeCode, isin: f.isin! }));
+      const isinToCode = new Map(pairs.map(p => [p.isin, p.code]));
+      const BATCH = 80;
       const batches: string[][] = [];
-      for (let i = 0; i < codes.length; i += BATCH) batches.push(codes.slice(i, i + BATCH));
+      for (let i = 0; i < pairs.length; i += BATCH) batches.push(pairs.slice(i, i + BATCH).map(p => p.isin));
       const collected: Record<string, number> = {};
-      await Promise.all(batches.map(async batch => {
+      await Promise.all(batches.map(async isinBatch => {
         try {
-          const res = await fetch(`/api/public/scheme-aum?codes=${batch.join(",")}`);
+          const res = await fetch(`/api/public/scheme-aum?isins=${isinBatch.join(",")}`);
           if (!res.ok) return;
           const data = await res.json() as Record<string, number>;
-          Object.assign(collected, data);
+          for (const [isin, cr] of Object.entries(data)) {
+            const code = isinToCode.get(isin);
+            if (code) collected[code] = cr;
+          }
         } catch { /* best-effort */ }
       }));
       if (Object.keys(collected).length > 0) setAumMap(new Map(Object.entries(collected)));

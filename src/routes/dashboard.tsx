@@ -25,7 +25,7 @@ export const Route = createFileRoute("/dashboard")({
 const POOL_CATS = QUANTFUND_CATEGORIES.filter(c => c !== "Unknown") as QuantFundCategory[];
 const ALL_CATS: Array<"All" | QuantFundCategory> = ["All", ...POOL_CATS];
 
-type PoolEntry = { schemeCode: string; schemeName: string; amc: string; nav: number; date: string; category: string; poolCategory: QuantFundCategory };
+type PoolEntry = { schemeCode: string; schemeName: string; amc: string; nav: number; isin: string | null; date: string; category: string; poolCategory: QuantFundCategory };
 type SortKey = "rank" | "schemeName" | "poolCategory" | "finalScore" | "nav" | "aum" | "annualReturnAvg" | "rollingReturn1yAvg";
 type SortDir = "asc" | "desc";
 
@@ -179,7 +179,8 @@ function DashboardPage() {
           const result = scoreWithPeers(metrics, peers);
           return {
             schemeCode: scheme.schemeCode, schemeName: scheme.schemeName,
-            amc: scheme.amc, nav: scheme.nav, category: scheme.category,
+            amc: scheme.amc, nav: scheme.nav, isin: scheme.isin ?? null,
+            category: scheme.category,
             poolCategory: scheme.poolCategory as string,
             fundScore: result.fundScore, finalScore: result.finalScore,
             confidenceScore: result.confidenceScore, rating: result.rating,
@@ -199,32 +200,41 @@ function DashboardPage() {
   const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
   useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
 
-  // AUM fetch — fires once after scoring is substantially complete (≥50 ranked funds
-  // and no new funds scored in the last 3 seconds). Parallel batches, single setState
-  // to avoid React state-race between concurrent updaters.
+  // AUM fetch — ISINs come from RankedFund.isin (parsed from AMFI NAVAll),
+  // so only ONE HTTP call per fund is needed (direct Kuvera lookup, no mfapi step).
+  // Fires once after ≥50 funds scored + 3s debounce. Single setState prevents races.
   const [aumMap, setAumMap] = useState<Map<string, number>>(new Map());
   const aumFetchedRef = useRef(false);
   useEffect(() => {
     if (allRanked.length < 50 || aumFetchedRef.current) return;
 
-    // Debounce: wait 3s of silence (no new funds scoring) before firing
     const timer = setTimeout(async () => {
       if (aumFetchedRef.current) return;
       aumFetchedRef.current = true;
 
-      const codes = allRanked.map(f => f.schemeCode);
-      const BATCH = 60;
-      const batches: string[][] = [];
-      for (let i = 0; i < codes.length; i += BATCH) batches.push(codes.slice(i, i + BATCH));
+      // Build pairs of {isin, code} — only funds that have a valid ISIN
+      const pairs = allRanked
+        .filter(f => f.isin && f.isin.startsWith("INF"))
+        .map(f => ({ code: f.schemeCode, isin: f.isin! }));
 
-      // All batches in parallel; collect results into one object, single setState
+      const isinToCode = new Map(pairs.map(p => [p.isin, p.code]));
+
+      const BATCH = 80;
+      const batches: string[][] = [];
+      for (let i = 0; i < pairs.length; i += BATCH) {
+        batches.push(pairs.slice(i, i + BATCH).map(p => p.isin));
+      }
+
       const collected: Record<string, number> = {};
-      await Promise.all(batches.map(async batch => {
+      await Promise.all(batches.map(async isinBatch => {
         try {
-          const res = await fetch(`/api/public/scheme-aum?codes=${batch.join(",")}`);
+          const res = await fetch(`/api/public/scheme-aum?isins=${isinBatch.join(",")}`);
           if (!res.ok) return;
           const data = await res.json() as Record<string, number>;
-          Object.assign(collected, data);
+          for (const [isin, cr] of Object.entries(data)) {
+            const code = isinToCode.get(isin);
+            if (code) collected[code] = cr;
+          }
         } catch { /* best-effort */ }
       }));
 
