@@ -161,7 +161,8 @@ function FundExplorer() {
   const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
   useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
 
-  // AUM map — uses ISINs from RankedFund (no extra mfapi lookup needed)
+  // AUM map — sends both AMFI ISIN columns per fund; server tries each and
+  // returns first success, keyed by schemeCode directly.
   const [aumMap, setAumMap] = useState<Map<string, number>>(new Map());
   const aumFetchedRef = useRef(false);
   useEffect(() => {
@@ -169,23 +170,22 @@ function FundExplorer() {
     const timer = setTimeout(async () => {
       if (aumFetchedRef.current) return;
       aumFetchedRef.current = true;
-      const pairs = allRanked
-        .filter(f => f.isin && f.isin.startsWith("INF"))
-        .map(f => ({ code: f.schemeCode, isin: f.isin! }));
-      const isinToCode = new Map(pairs.map(p => [p.isin, p.code]));
-      const BATCH = 80;
+      const entries = allRanked
+        .map(f => {
+          const cands = [f.isin, f.isin2].filter((x): x is string => !!x && x.startsWith("INF"));
+          return cands.length ? `${f.schemeCode}:${cands.join("|")}` : null;
+        })
+        .filter((x): x is string => x != null);
+      const BATCH = 60;
       const batches: string[][] = [];
-      for (let i = 0; i < pairs.length; i += BATCH) batches.push(pairs.slice(i, i + BATCH).map(p => p.isin));
+      for (let i = 0; i < entries.length; i += BATCH) batches.push(entries.slice(i, i + BATCH));
       const collected: Record<string, number> = {};
-      await Promise.all(batches.map(async isinBatch => {
+      await Promise.all(batches.map(async batch => {
         try {
-          const res = await fetch(`/api/public/scheme-aum?isins=${isinBatch.join(",")}`);
+          const res = await fetch(`/api/public/scheme-aum?funds=${batch.join(",")}`);
           if (!res.ok) return;
           const data = await res.json() as Record<string, number>;
-          for (const [isin, cr] of Object.entries(data)) {
-            const code = isinToCode.get(isin);
-            if (code) collected[code] = cr;
-          }
+          Object.assign(collected, data);
         } catch { /* best-effort */ }
       }));
       if (Object.keys(collected).length > 0) setAumMap(new Map(Object.entries(collected)));
@@ -329,9 +329,14 @@ function FundExplorer() {
                       <td className="p-3 text-right"><ScoreCell v={f.exploreScore} /></td>
                       {/* Fund Size */}
                       <td className="p-3 text-right">
-                        {(() => { const aum = aumMap.get(f.schemeCode); return aum != null
-                          ? <span className="font-mono text-[11px] tabular-nums text-foreground">{aum >= 10000 ? `₹${(aum/1000).toFixed(1)}K Cr` : aum >= 1000 ? `₹${(aum/1000).toFixed(2)}K Cr` : `₹${aum.toFixed(0)} Cr`}</span>
-                          : <span className="font-mono text-[10px] text-muted-foreground">—</span>; })()}
+                        {(() => {
+                          const aum = aumMap.get(f.schemeCode);
+                          if (aum != null) {
+                            return <span className="font-mono text-[11px] tabular-nums text-foreground">{aum >= 10000 ? `₹${(aum/1000).toFixed(1)}K Cr` : aum >= 1000 ? `₹${(aum/1000).toFixed(2)}K Cr` : `₹${aum.toFixed(0)} Cr`}</span>;
+                          }
+                          const hasIsin = !!(f.isin || f.isin2);
+                          return <span className="font-mono text-[10px] text-muted-foreground" title={hasIsin ? "Not found in Kuvera AUM index" : "No ISIN in AMFI data for this scheme"}>—</span>;
+                        })()}
                       </td>
                       <td className="p-3 text-right">
                         {m.beta != null ? <span className={`font-mono text-[11px] tabular-nums ${m.beta < 0.8 ? "text-positive" : m.beta < 1.1 ? "text-foreground" : "text-negative"}`}>{fmtNum(m.beta, 2)}</span>

@@ -51,7 +51,8 @@ export interface RankedFund {
   schemeName: string;
   amc: string;
   nav: number;
-  isin: string | null;          // from AMFI NAVAll — used for AUM lookup
+  isin: string | null;          // from AMFI NAVAll col1 — used for AUM lookup
+  isin2: string | null;         // from AMFI NAVAll col2 — fallback for AUM lookup
   category: string;
   poolCategory: string;
   // Engine scoring (category-relative, 7-pillar)

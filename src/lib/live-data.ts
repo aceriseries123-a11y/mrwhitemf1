@@ -26,7 +26,8 @@ import { useQuery } from "@tanstack/react-query";
 export interface AMFIScheme {
   schemeCode: string;
   schemeName: string;
-  isin: string | null;
+  isin: string | null;   // col1: "ISIN Div Payout / ISIN Growth"
+  isin2: string | null;  // col2: "ISIN Div Reinvestment" — used as fallback for AUM lookup
   nav: number;
   date: string; // "DD-MMM-YYYY"
   amc: string;
@@ -102,15 +103,21 @@ function parseAMFINavAll(raw: string): AMFIScheme[] {
     const parts = line.split(";");
     if (parts.length < 6) continue;
 
-    const [schemeCode, isin1, , schemeName, navStr, date] = parts;
+    const [schemeCode, isin1, isin2, schemeName, navStr, date] = parts;
 
     const nav = parseFloat(navStr);
     if (!schemeCode || isNaN(nav) || nav <= 0) continue;
 
+    const parseIsin = (raw: string | undefined) => {
+      const v = raw?.trim();
+      return v && v !== "-" && v.length > 5 ? v : null;
+    };
+
     schemes.push({
       schemeCode: schemeCode.trim(),
       schemeName: schemeName.trim(),
-      isin: isin1?.trim() || null,
+      isin:  parseIsin(isin1),
+      isin2: parseIsin(isin2),
       nav,
       date: date?.trim() ?? "",
       amc: currentAMC,

@@ -3,35 +3,35 @@ import { createFileRoute } from "@tanstack/react-router";
 /**
  * scheme-aum — AUM lookup via Kuvera/captnemo
  *
- * Client passes ISINs directly (already available from AMFI NAVAll.txt),
- * avoiding the mfapi.in lookup entirely. One HTTP call per ISIN vs two before.
+ * Request format:
+ *   ?funds=CODE1:ISIN_A|ISIN_B,CODE2:ISIN_C,...
  *
- * Two calling conventions (client can use either):
- *   ?isins=INF209K01YJ9,INF179K01BB8,...   → returns { [isin]: crores }
- *   ?codes=120503,120504,...               → legacy, needs ISIN map (slower)
+ * Each fund can carry up to 2 candidate ISINs (AMFI NAVAll col1 + col2 — the
+ * "growth" ISIN isn't always in the same column for every scheme variant).
+ * The server tries each candidate ISIN in order and uses the first that
+ * returns a valid AUM. Response is keyed by schemeCode directly:
  *
- * Preferred: use ?isins= so the server only needs one fetch per fund.
+ *   { "120503": 45821, "118989": 12044, ... }
  *
  * Kuvera endpoint: https://mf.captnemo.in/kuvera/{isin}
- * Returns array: [{ aum: <lakhs>, ... }]
- * We convert lakhs → crores: crores = Math.round(aum / 100)
+ * Returns array: [{ aum: <lakhs>, ... }]  → crores = round(lakhs / 100)
  *
- * In-memory cache per worker: TTL 24 h
- * Max 80 ISINs per request (resolved in parallel)
+ * In-memory cache per ISIN: TTL 24h.
+ * Max 60 funds per request (each fund tries up to 2 ISINs = up to 120 fetches,
+ * all run in parallel across funds AND across each fund's candidate list is
+ * sequential-with-early-exit to avoid wasting a call once one ISIN succeeds).
  */
 
 type Cached = { at: number; cr: number | null };
 const isinCache = new Map<string, Cached>();
 const TTL_MS = 24 * 60 * 60 * 1000;
-const MAX_ISINS = 80;
-const TIMEOUT_MS = 8000;
+const MAX_FUNDS = 60;
+const TIMEOUT_MS = 7000;
 
 function withTimeout(p: Promise<Response>, ms: number): Promise<Response> {
   return Promise.race([
     p,
-    new Promise<Response>((_, reject) =>
-      setTimeout(() => reject(new Error("timeout")), ms)
-    ),
+    new Promise<Response>((_, reject) => setTimeout(() => reject(new Error("timeout")), ms)),
   ]);
 }
 
@@ -55,7 +55,7 @@ async function fetchAumByIsin(isin: string): Promise<number | null> {
   }
 }
 
-async function getAumByIsin(isin: string): Promise<number | null> {
+async function getAumByIsinCached(isin: string): Promise<number | null> {
   const now = Date.now();
   const hit = isinCache.get(isin);
   if (hit && now - hit.at < TTL_MS) return hit.cr;
@@ -64,40 +64,50 @@ async function getAumByIsin(isin: string): Promise<number | null> {
   return cr;
 }
 
+/** Try each candidate ISIN in order; stop at first success. */
+async function resolveAumForFund(isins: string[]): Promise<number | null> {
+  for (const isin of isins) {
+    const cr = await getAumByIsinCached(isin);
+    if (cr != null) return cr;
+  }
+  return null;
+}
+
 export const Route = createFileRoute("/api/public/scheme-aum")({
   server: {
     handlers: {
       GET: async ({ request }) => {
         const url = new URL(request.url);
+        const raw = url.searchParams.get("funds") || "";
 
-        // Preferred: client sends ISINs directly
-        const rawIsins = url.searchParams.get("isins") || "";
-        const isins = Array.from(
-          new Set(
-            rawIsins
-              .split(",")
-              .map(s => s.trim())
-              .filter(s => s.length > 0 && s.startsWith("INF"))
-          )
-        ).slice(0, MAX_ISINS);
+        // Parse "CODE:ISIN_A|ISIN_B,CODE2:ISIN_C" into [{code, isins}]
+        const funds = raw
+          .split(",")
+          .map(s => s.trim())
+          .filter(Boolean)
+          .map(entry => {
+            const [code, isinStr] = entry.split(":");
+            if (!code || !isinStr) return null;
+            const isins = isinStr.split("|").filter(i => i.startsWith("INF"));
+            if (isins.length === 0) return null;
+            return { code: code.trim(), isins };
+          })
+          .filter((x): x is { code: string; isins: string[] } => x != null)
+          .slice(0, MAX_FUNDS);
 
-        if (isins.length === 0) {
-          return Response.json({}, {
-            headers: { "Cache-Control": "public, max-age=3600" },
-          });
+        if (funds.length === 0) {
+          return Response.json({}, { headers: { "Cache-Control": "public, max-age=3600" } });
         }
 
-        // Resolve all ISINs in parallel
+        // Resolve all funds in parallel; within each fund, ISINs tried sequentially
+        // with early exit (usually only 1 fetch unless the first ISIN fails).
         const results = await Promise.all(
-          isins.map(async isin => {
-            const cr = await getAumByIsin(isin);
-            return [isin, cr] as const;
-          })
+          funds.map(async f => [f.code, await resolveAumForFund(f.isins)] as const)
         );
 
         const map: Record<string, number> = {};
-        for (const [isin, cr] of results) {
-          if (cr != null) map[isin] = cr;
+        for (const [code, cr] of results) {
+          if (cr != null) map[code] = cr;
         }
 
         return Response.json(map, {

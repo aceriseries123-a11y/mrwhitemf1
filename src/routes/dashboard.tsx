@@ -25,7 +25,7 @@ export const Route = createFileRoute("/dashboard")({
 const POOL_CATS = QUANTFUND_CATEGORIES.filter(c => c !== "Unknown") as QuantFundCategory[];
 const ALL_CATS: Array<"All" | QuantFundCategory> = ["All", ...POOL_CATS];
 
-type PoolEntry = { schemeCode: string; schemeName: string; amc: string; nav: number; isin: string | null; date: string; category: string; poolCategory: QuantFundCategory };
+type PoolEntry = { schemeCode: string; schemeName: string; amc: string; nav: number; isin: string | null; isin2: string | null; date: string; category: string; poolCategory: QuantFundCategory };
 type SortKey = "rank" | "schemeName" | "poolCategory" | "finalScore" | "nav" | "aum" | "annualReturnAvg" | "rollingReturn1yAvg";
 type SortDir = "asc" | "desc";
 
@@ -179,7 +179,7 @@ function DashboardPage() {
           const result = scoreWithPeers(metrics, peers);
           return {
             schemeCode: scheme.schemeCode, schemeName: scheme.schemeName,
-            amc: scheme.amc, nav: scheme.nav, isin: scheme.isin ?? null,
+            amc: scheme.amc, nav: scheme.nav, isin: scheme.isin ?? null, isin2: scheme.isin2 ?? null,
             category: scheme.category,
             poolCategory: scheme.poolCategory as string,
             fundScore: result.fundScore, finalScore: result.finalScore,
@@ -200,8 +200,10 @@ function DashboardPage() {
   const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
   useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
 
-  // AUM fetch — ISINs come from RankedFund.isin (parsed from AMFI NAVAll),
-  // so only ONE HTTP call per fund is needed (direct Kuvera lookup, no mfapi step).
+  // AUM fetch — sends BOTH AMFI ISIN columns per fund (growth ISIN + reinvestment
+  // ISIN) since either may resolve in Kuvera/captnemo's index. Server tries each
+  // candidate ISIN in order and returns the first that succeeds, keyed by
+  // schemeCode directly (no client-side ISIN remapping needed).
   // Fires once after ≥50 funds scored + 3s debounce. Single setState prevents races.
   const [aumMap, setAumMap] = useState<Map<string, number>>(new Map());
   const aumFetchedRef = useRef(false);
@@ -212,29 +214,25 @@ function DashboardPage() {
       if (aumFetchedRef.current) return;
       aumFetchedRef.current = true;
 
-      // Build pairs of {isin, code} — only funds that have a valid ISIN
-      const pairs = allRanked
-        .filter(f => f.isin && f.isin.startsWith("INF"))
-        .map(f => ({ code: f.schemeCode, isin: f.isin! }));
+      // code -> "isin1|isin2" (only including non-null candidates)
+      const entries = allRanked
+        .map(f => {
+          const cands = [f.isin, f.isin2].filter((x): x is string => !!x && x.startsWith("INF"));
+          return cands.length ? `${f.schemeCode}:${cands.join("|")}` : null;
+        })
+        .filter((x): x is string => x != null);
 
-      const isinToCode = new Map(pairs.map(p => [p.isin, p.code]));
-
-      const BATCH = 80;
+      const BATCH = 60; // fewer per batch since each fund may carry 2 ISINs now
       const batches: string[][] = [];
-      for (let i = 0; i < pairs.length; i += BATCH) {
-        batches.push(pairs.slice(i, i + BATCH).map(p => p.isin));
-      }
+      for (let i = 0; i < entries.length; i += BATCH) batches.push(entries.slice(i, i + BATCH));
 
       const collected: Record<string, number> = {};
-      await Promise.all(batches.map(async isinBatch => {
+      await Promise.all(batches.map(async batch => {
         try {
-          const res = await fetch(`/api/public/scheme-aum?isins=${isinBatch.join(",")}`);
+          const res = await fetch(`/api/public/scheme-aum?funds=${batch.join(",")}`);
           if (!res.ok) return;
           const data = await res.json() as Record<string, number>;
-          for (const [isin, cr] of Object.entries(data)) {
-            const code = isinToCode.get(isin);
-            if (code) collected[code] = cr;
-          }
+          Object.assign(collected, data);
         } catch { /* best-effort */ }
       }));
 
@@ -382,7 +380,9 @@ function DashboardPage() {
                         <td className="p-3 text-right">
                           {aum != null
                             ? <span className="font-mono text-[11px] tabular-nums text-foreground">{fmtAUM(aum)}</span>
-                            : <span className="font-mono text-[10px] text-muted-foreground" title={aumLoaded ? "AUM not available for this fund" : "Loading AUM…"}>
+                            : <span className="font-mono text-[10px] text-muted-foreground" title={
+                                !aumLoaded ? "Loading AUM…" : (f.isin || f.isin2) ? "Not found in Kuvera AUM index" : "No ISIN in AMFI data for this scheme"
+                              }>
                                 {aumLoaded ? "—" : <Loader2 className="inline h-3 w-3 animate-spin" />}
                               </span>}
                         </td>
@@ -422,7 +422,7 @@ function DashboardPage() {
         <p className="text-[10px] leading-relaxed text-muted-foreground">
           <span className="text-foreground font-semibold">Avg Cal-Yr Ret</span> = arithmetic mean of each calendar year's Jan→Dec simple return. Hover cell to see per-year values.
           <span className="text-foreground font-semibold ml-2">Rolling 1Y Avg</span> = mean of ALL rolling 1-year point-to-point returns (every trading day as endpoint).
-          <span className="text-foreground font-semibold ml-2">Fund Size</span> = AUM via Kuvera API (ISIN lookup), loaded after scoring completes.
+          <span className="text-foreground font-semibold ml-2">Fund Size</span> = AUM via Kuvera (matched by AMFI ISIN). Some funds show "—" if Kuvera has no record under either ISIN AMFI publishes for that scheme — this is a data-coverage gap upstream, not an error.
         </p>
       </div>
     </AppShell>
