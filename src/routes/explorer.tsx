@@ -15,7 +15,7 @@ import { BarChart2, ChevronUp, ChevronDown, ChevronsUpDown, Search, X } from "lu
 import { fmtNum, fmtPct } from "@/lib/format";
 import { AppShell } from "@/components/AppShell";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
-import { getFullRankedList, subscribeToRankedList, type RankedFund } from "@/lib/fund-store";
+import { getFullRankedList, subscribeToRankedList, isScoringDone, type RankedFund } from "@/lib/fund-store";
 import { QUANTFUND_CATEGORIES, categoryColor, type QuantFundCategory } from "@/lib/categories";
 import { computeExploreScore, computeRiskAdjReturn } from "@/lib/explore-metrics";
 
@@ -161,36 +161,64 @@ function FundExplorer() {
   const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
   useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
 
-  // AUM map — sends both AMFI ISIN columns per fund; server tries each and
-  // returns first success, keyed by schemeCode directly.
+  // AUM map — fires once Dashboard's scoring pass is fully complete (not a
+  // fund-count heuristic, which produced inconsistent results), sends both
+  // AMFI ISIN columns per fund, bounded concurrency + one retry on failure.
   const [aumMap, setAumMap] = useState<Map<string, number>>(new Map());
   const aumFetchedRef = useRef(false);
   useEffect(() => {
-    if (allRanked.length < 50 || aumFetchedRef.current) return;
-    const timer = setTimeout(async () => {
-      if (aumFetchedRef.current) return;
-      aumFetchedRef.current = true;
+    if (!isScoringDone() || aumFetchedRef.current) return;
+    if (allRanked.length === 0) return;
+    aumFetchedRef.current = true;
+
+    const runFetch = async () => {
       const entries = allRanked
         .map(f => {
           const cands = [f.isin, f.isin2].filter((x): x is string => !!x && x.startsWith("INF"));
           return cands.length ? `${f.schemeCode}:${cands.join("|")}` : null;
         })
         .filter((x): x is string => x != null);
-      const BATCH = 60;
+
+      const BATCH = 40;
+      const CONCURRENCY = 6;
       const batches: string[][] = [];
       for (let i = 0; i < entries.length; i += BATCH) batches.push(entries.slice(i, i + BATCH));
+
       const collected: Record<string, number> = {};
-      await Promise.all(batches.map(async batch => {
+      const fetchBatch = async (batch: string[]): Promise<boolean> => {
         try {
           const res = await fetch(`/api/public/scheme-aum?funds=${batch.join(",")}`);
-          if (!res.ok) return;
+          if (!res.ok) return false;
           const data = await res.json() as Record<string, number>;
           Object.assign(collected, data);
-        } catch { /* best-effort */ }
-      }));
-      if (Object.keys(collected).length > 0) setAumMap(new Map(Object.entries(collected)));
-    }, 3000);
-    return () => clearTimeout(timer);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      const failed: string[][] = [];
+      let cursor = 0;
+      const workers = Array.from({ length: CONCURRENCY }, async () => {
+        while (cursor < batches.length) {
+          const batch = batches[cursor++];
+          const ok = await fetchBatch(batch);
+          if (!ok) failed.push(batch);
+          setAumMap(new Map(Object.entries(collected)));
+        }
+      });
+      await Promise.all(workers);
+
+      if (failed.length > 0) {
+        await new Promise(r => setTimeout(r, 2000));
+        for (const batch of failed) {
+          await fetchBatch(batch);
+          setAumMap(new Map(Object.entries(collected)));
+        }
+      }
+    };
+
+    runFetch();
   }, [allRanked.length]);
 
   const catPeersMap = useMemo(() => {

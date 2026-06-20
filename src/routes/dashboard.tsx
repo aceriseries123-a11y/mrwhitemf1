@@ -8,7 +8,7 @@ import { fetchNavHistory, type NavHistory, type NavPoint } from "../lib/nav-hist
 import { fmtPct, fmtNum } from "../lib/format";
 import { AppShell } from "@/components/AppShell";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
-import { storeSeries, mergeCategoryIntoStore, subscribeToRankedList, getFullRankedList, type RankedFund } from "../lib/fund-store";
+import { storeSeries, mergeCategoryIntoStore, subscribeToRankedList, getFullRankedList, markScoringDone, isScoringDone, type RankedFund } from "../lib/fund-store";
 import { computeEngineMetrics, buildBenchmark, scoreWithPeers, type EngineMetrics } from "../lib/scoring-engine";
 import { saveEngineCache, loadEngineCache } from "../lib/engine-cache";
 
@@ -154,7 +154,10 @@ function DashboardPage() {
     const allCats = [...new Set(candidates.map(s => s.poolCategory))];
     let ci = 0;
     const next = () => {
-      if (ci >= allCats.length) return;
+      if (ci >= allCats.length) {
+        markScoringDone();
+        return;
+      }
       const cat = allCats[ci++];
       const newFunds = toCompute.get(cat) ?? [];
       if (newFunds.length > 0) {
@@ -200,49 +203,79 @@ function DashboardPage() {
   const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
   useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
 
-  // AUM fetch — sends BOTH AMFI ISIN columns per fund (growth ISIN + reinvestment
-  // ISIN) since either may resolve in Kuvera/captnemo's index. Server tries each
-  // candidate ISIN in order and returns the first that succeeds, keyed by
-  // schemeCode directly (no client-side ISIN remapping needed).
-  // Fires once after ≥50 funds scored + 3s debounce. Single setState prevents races.
+  // AUM fetch — fires once scoring is FULLY complete (markScoringDone() called
+  // by the category-scoring loop above, NOT the NAV-fetch-settled `done` flag,
+  // which becomes true before scoring even starts and was causing the AUM
+  // fetch to run against a partially-populated or empty store). Sends both
+  // AMFI ISIN columns per fund. Batches run with bounded concurrency (6 in
+  // flight) instead of all-at-once, since blasting 1300+ funds' worth of
+  // requests simultaneously overwhelms Kuvera and causes random batches to
+  // time out — which is what produced the 200/300/500 variance. Failed
+  // batches get one retry after a short delay.
   const [aumMap, setAumMap] = useState<Map<string, number>>(new Map());
   const aumFetchedRef = useRef(false);
   useEffect(() => {
-    if (allRanked.length < 50 || aumFetchedRef.current) return;
+    if (aumFetchedRef.current) return;
+    if (!isScoringDone()) return; // re-checked on every allRanked update via subscription below
+    aumFetchedRef.current = true;
 
-    const timer = setTimeout(async () => {
-      if (aumFetchedRef.current) return;
-      aumFetchedRef.current = true;
+    const allFunds = getFullRankedList();
 
-      // code -> "isin1|isin2" (only including non-null candidates)
-      const entries = allRanked
+    const runFetch = async () => {
+      const entries = allFunds
         .map(f => {
           const cands = [f.isin, f.isin2].filter((x): x is string => !!x && x.startsWith("INF"));
           return cands.length ? `${f.schemeCode}:${cands.join("|")}` : null;
         })
         .filter((x): x is string => x != null);
 
-      const BATCH = 60; // fewer per batch since each fund may carry 2 ISINs now
+      const BATCH = 40;
+      const CONCURRENCY = 6;
       const batches: string[][] = [];
       for (let i = 0; i < entries.length; i += BATCH) batches.push(entries.slice(i, i + BATCH));
 
       const collected: Record<string, number> = {};
-      await Promise.all(batches.map(async batch => {
+
+      const fetchBatch = async (batch: string[]): Promise<boolean> => {
         try {
           const res = await fetch(`/api/public/scheme-aum?funds=${batch.join(",")}`);
-          if (!res.ok) return;
+          if (!res.ok) return false;
           const data = await res.json() as Record<string, number>;
           Object.assign(collected, data);
-        } catch { /* best-effort */ }
-      }));
+          return true;
+        } catch {
+          return false;
+        }
+      };
 
-      if (Object.keys(collected).length > 0) {
-        setAumMap(new Map(Object.entries(collected)));
+      // Bounded-concurrency queue with one retry for failed batches
+      const failed: string[][] = [];
+      let cursor = 0;
+      const workers = Array.from({ length: CONCURRENCY }, async () => {
+        while (cursor < batches.length) {
+          const batch = batches[cursor++];
+          const ok = await fetchBatch(batch);
+          if (!ok) failed.push(batch);
+          // Push partial results to the UI as they arrive so the table fills in live
+          setAumMap(new Map(Object.entries(collected)));
+        }
+      });
+      await Promise.all(workers);
+
+      // Retry failed batches once, sequentially with small delay (Kuvera likely
+      // rate-limited us — give it a moment to recover)
+      if (failed.length > 0) {
+        await new Promise(r => setTimeout(r, 2000));
+        for (const batch of failed) {
+          await fetchBatch(batch);
+          setAumMap(new Map(Object.entries(collected)));
+        }
       }
-    }, 3000);
+    };
 
-    return () => clearTimeout(timer);
-  }, [allRanked.length]);
+    runFetch();
+  }, [allRanked]);
+
 
   const toggleSort = (k: SortKey) => {
     if (sortKey === k) setSortDir(d => d === "desc" ? "asc" : "desc");
@@ -318,6 +351,13 @@ function DashboardPage() {
             {!done && <Loader2 className="h-3 w-3 animate-spin text-cyan" />}
             {done && <CheckCircle2 className="h-3 w-3 text-positive" />}
           </span>
+          {done && (
+            <span className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 font-mono text-[10px] text-muted-foreground">
+              Fund Size: {aumMap.size.toLocaleString()}/{totalFunds.toLocaleString()}
+              {aumMap.size < totalFunds && <Loader2 className="h-3 w-3 animate-spin text-cyan" />}
+              {aumMap.size > 0 && aumMap.size >= totalFunds * 0.85 && <CheckCircle2 className="h-3 w-3 text-positive" />}
+            </span>
+          )}
         </div>
 
         {/* Methodology strip */}

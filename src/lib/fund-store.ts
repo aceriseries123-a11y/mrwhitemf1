@@ -69,6 +69,7 @@ export interface RankedFund {
 // Per-category lists — merged and re-sorted into fullRankedList on every update
 const categoryListsStore = new Map<string, RankedFund[]>();
 let fullRankedList: RankedFund[] = [];
+let scoringDone = false;
 type Listener = () => void;
 const listeners = new Set<Listener>();
 
@@ -116,4 +117,21 @@ export function subscribeToRankedList(fn: Listener): () => void {
 /** Number of funds in the full ranked list. */
 export function rankedCount(): number {
   return fullRankedList.length;
+}
+
+/**
+ * Mark scoring as fully complete (called by Dashboard once every category
+ * has been scored). Other pages (Explorer, etc.) use this instead of a
+ * fund-count heuristic to know when it's safe to trigger AUM fetching —
+ * a count threshold is unreliable because funds trickle in incrementally
+ * and a fixed debounce can fire too early or never settle.
+ */
+export function markScoringDone(): void {
+  scoringDone = true;
+  listeners.forEach((fn) => fn());
+}
+
+/** Whether Dashboard has finished scoring every category at least once this session. */
+export function isScoringDone(): boolean {
+  return scoringDone;
 }
