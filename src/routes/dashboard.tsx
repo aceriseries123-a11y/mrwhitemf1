@@ -9,6 +9,7 @@ import { fmtPct, fmtNum } from "../lib/format";
 import { AppShell } from "@/components/AppShell";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
 import { storeSeries, mergeCategoryIntoStore, subscribeToRankedList, getFullRankedList, markScoringDone, isScoringDone, type RankedFund } from "../lib/fund-store";
+import { loadAumCache, saveAumCache } from "../lib/aum-cache";
 import { computeEngineMetrics, buildBenchmark, scoreWithPeers, type EngineMetrics } from "../lib/scoring-engine";
 import { saveEngineCache, loadEngineCache } from "../lib/engine-cache";
 
@@ -205,14 +206,18 @@ function DashboardPage() {
 
   // AUM fetch — fires once scoring is FULLY complete (markScoringDone() called
   // by the category-scoring loop above, NOT the NAV-fetch-settled `done` flag,
-  // which becomes true before scoring even starts and was causing the AUM
-  // fetch to run against a partially-populated or empty store). Sends both
-  // AMFI ISIN columns per fund. Batches run with bounded concurrency (6 in
-  // flight) instead of all-at-once, since blasting 1300+ funds' worth of
-  // requests simultaneously overwhelms Kuvera and causes random batches to
-  // time out — which is what produced the 200/300/500 variance. Failed
-  // batches get one retry after a short delay.
-  const [aumMap, setAumMap] = useState<Map<string, number>>(new Map());
+  // which becomes true before scoring even starts).
+  //
+  // Persistent cache (24h, localStorage): on mount we load any AUM values
+  // resolved on a PREVIOUS run/session and show them immediately — only
+  // funds NOT already cached get fetched. This means a fund that failed due
+  // to transient Kuvera rate-limiting on one run can succeed on a later run
+  // (or page reload) and then STAYS resolved for the rest of the day,
+  // instead of every reload re-fighting the same rate limits from zero.
+  //
+  // Bounded concurrency (6 in flight) + up to 3 retry rounds with increasing
+  // backoff (2s, 5s, 10s) for whatever's still missing after each round.
+  const [aumMap, setAumMap] = useState<Map<string, number>>(loadAumCache);
   const aumFetchedRef = useRef(false);
   useEffect(() => {
     if (aumFetchedRef.current) return;
@@ -220,20 +225,22 @@ function DashboardPage() {
     aumFetchedRef.current = true;
 
     const allFunds = getFullRankedList();
+    const cached = loadAumCache();
 
     const runFetch = async () => {
+      // Only fetch funds NOT already in the persistent cache
       const entries = allFunds
+        .filter(f => !cached.has(f.schemeCode))
         .map(f => {
           const cands = [f.isin, f.isin2].filter((x): x is string => !!x && x.startsWith("INF"));
           return cands.length ? `${f.schemeCode}:${cands.join("|")}` : null;
         })
         .filter((x): x is string => x != null);
 
+      if (entries.length === 0) return; // everything already cached
+
       const BATCH = 40;
       const CONCURRENCY = 6;
-      const batches: string[][] = [];
-      for (let i = 0; i < entries.length; i += BATCH) batches.push(entries.slice(i, i + BATCH));
-
       const collected: Record<string, number> = {};
 
       const fetchBatch = async (batch: string[]): Promise<boolean> => {
@@ -248,28 +255,33 @@ function DashboardPage() {
         }
       };
 
-      // Bounded-concurrency queue with one retry for failed batches
-      const failed: string[][] = [];
-      let cursor = 0;
-      const workers = Array.from({ length: CONCURRENCY }, async () => {
-        while (cursor < batches.length) {
-          const batch = batches[cursor++];
-          const ok = await fetchBatch(batch);
-          if (!ok) failed.push(batch);
-          // Push partial results to the UI as they arrive so the table fills in live
-          setAumMap(new Map(Object.entries(collected)));
-        }
-      });
-      await Promise.all(workers);
+      const runRound = async (items: string[]): Promise<string[]> => {
+        const batches: string[][] = [];
+        for (let i = 0; i < items.length; i += BATCH) batches.push(items.slice(i, i + BATCH));
+        const failed: string[][] = [];
+        let cursor = 0;
+        const workers = Array.from({ length: CONCURRENCY }, async () => {
+          while (cursor < batches.length) {
+            const batch = batches[cursor++];
+            const ok = await fetchBatch(batch);
+            if (!ok) failed.push(batch);
+            // Push partial results live + persist successes immediately
+            setAumMap(new Map([...cached, ...Object.entries(collected)]));
+            saveAumCache(collected);
+          }
+        });
+        await Promise.all(workers);
+        return failed.flat();
+      };
 
-      // Retry failed batches once, sequentially with small delay (Kuvera likely
-      // rate-limited us — give it a moment to recover)
-      if (failed.length > 0) {
-        await new Promise(r => setTimeout(r, 2000));
-        for (const batch of failed) {
-          await fetchBatch(batch);
-          setAumMap(new Map(Object.entries(collected)));
-        }
+      // Round 1
+      let remaining = await runRound(entries);
+      // Up to 2 more retry rounds with increasing backoff for transient failures
+      const backoffs = [3000, 6000];
+      for (const delay of backoffs) {
+        if (remaining.length === 0) break;
+        await new Promise(r => setTimeout(r, delay));
+        remaining = await runRound(remaining);
       }
     };
 
@@ -367,7 +379,7 @@ function DashboardPage() {
             Performance <span className="text-foreground">40%</span> · Consistency <span className="text-foreground">30%</span> · Risk <span className="text-foreground">20%</span> · Benchmark Skill <span className="text-foreground">10%</span>
             &nbsp;·&nbsp;Portfolio Quality &amp; Manager Quality: <span className="text-muted-foreground italic">Coming Soon</span> (removed from scoring until real data available)
             &nbsp;·&nbsp;<span className="font-bold text-cyan">Avg Cal-Yr Ret</span> = mean of each calendar year's return · <span className="font-bold text-cyan">Rolling 1Y Avg</span> = mean of every rolling 1Y return window
-            &nbsp;·&nbsp;<span className="font-bold text-cyan">Fund Size</span> = AUM in ₹ Cr via Kuvera (loaded after scoring)
+            &nbsp;·&nbsp;<span className="font-bold text-cyan">Fund Size</span> = AUM in ₹ Cr via Kuvera, cached 24h (auto-retries on reload for funds still missing)
           </p>
         </div>
 
@@ -462,7 +474,7 @@ function DashboardPage() {
         <p className="text-[10px] leading-relaxed text-muted-foreground">
           <span className="text-foreground font-semibold">Avg Cal-Yr Ret</span> = arithmetic mean of each calendar year's Jan→Dec simple return. Hover cell to see per-year values.
           <span className="text-foreground font-semibold ml-2">Rolling 1Y Avg</span> = mean of ALL rolling 1-year point-to-point returns (every trading day as endpoint).
-          <span className="text-foreground font-semibold ml-2">Fund Size</span> = AUM via Kuvera (matched by AMFI ISIN). Some funds show "—" if Kuvera has no record under either ISIN AMFI publishes for that scheme — this is a data-coverage gap upstream, not an error.
+          <span className="text-foreground font-semibold ml-2">Fund Size</span> = AUM via Kuvera (matched by AMFI ISIN), cached locally for 24h once resolved. The app retries missing funds across up to 3 rounds with backoff each session, and resolved values persist across reloads — so coverage improves over repeated visits within the same day rather than re-fighting the same rate limits from zero. Some funds may still show "—" if Kuvera has no record under either ISIN AMFI publishes for that scheme.
         </p>
       </div>
     </AppShell>

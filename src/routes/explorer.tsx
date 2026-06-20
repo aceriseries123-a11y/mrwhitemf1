@@ -16,6 +16,7 @@ import { fmtNum, fmtPct } from "@/lib/format";
 import { AppShell } from "@/components/AppShell";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
 import { getFullRankedList, subscribeToRankedList, isScoringDone, type RankedFund } from "@/lib/fund-store";
+import { loadAumCache, saveAumCache } from "@/lib/aum-cache";
 import { QUANTFUND_CATEGORIES, categoryColor, type QuantFundCategory } from "@/lib/categories";
 import { computeExploreScore, computeRiskAdjReturn } from "@/lib/explore-metrics";
 
@@ -161,30 +162,34 @@ function FundExplorer() {
   const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
   useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
 
-  // AUM map — fires once Dashboard's scoring pass is fully complete (not a
-  // fund-count heuristic, which produced inconsistent results), sends both
-  // AMFI ISIN columns per fund, bounded concurrency + one retry on failure.
-  const [aumMap, setAumMap] = useState<Map<string, number>>(new Map());
+  // AUM map — fires once Dashboard's scoring pass is fully complete.
+  // Persistent localStorage cache (24h): previously-resolved funds appear
+  // instantly; only genuinely-missing funds get fetched, and successes are
+  // saved immediately so they survive page reloads and future sessions.
+  const [aumMap, setAumMap] = useState<Map<string, number>>(loadAumCache);
   const aumFetchedRef = useRef(false);
   useEffect(() => {
     if (!isScoringDone() || aumFetchedRef.current) return;
     if (allRanked.length === 0) return;
     aumFetchedRef.current = true;
 
+    const cached = loadAumCache();
+
     const runFetch = async () => {
       const entries = allRanked
+        .filter(f => !cached.has(f.schemeCode))
         .map(f => {
           const cands = [f.isin, f.isin2].filter((x): x is string => !!x && x.startsWith("INF"));
           return cands.length ? `${f.schemeCode}:${cands.join("|")}` : null;
         })
         .filter((x): x is string => x != null);
 
+      if (entries.length === 0) return;
+
       const BATCH = 40;
       const CONCURRENCY = 6;
-      const batches: string[][] = [];
-      for (let i = 0; i < entries.length; i += BATCH) batches.push(entries.slice(i, i + BATCH));
-
       const collected: Record<string, number> = {};
+
       const fetchBatch = async (batch: string[]): Promise<boolean> => {
         try {
           const res = await fetch(`/api/public/scheme-aum?funds=${batch.join(",")}`);
@@ -197,24 +202,30 @@ function FundExplorer() {
         }
       };
 
-      const failed: string[][] = [];
-      let cursor = 0;
-      const workers = Array.from({ length: CONCURRENCY }, async () => {
-        while (cursor < batches.length) {
-          const batch = batches[cursor++];
-          const ok = await fetchBatch(batch);
-          if (!ok) failed.push(batch);
-          setAumMap(new Map(Object.entries(collected)));
-        }
-      });
-      await Promise.all(workers);
+      const runRound = async (items: string[]): Promise<string[]> => {
+        const batches: string[][] = [];
+        for (let i = 0; i < items.length; i += BATCH) batches.push(items.slice(i, i + BATCH));
+        const failed: string[][] = [];
+        let cursor = 0;
+        const workers = Array.from({ length: CONCURRENCY }, async () => {
+          while (cursor < batches.length) {
+            const batch = batches[cursor++];
+            const ok = await fetchBatch(batch);
+            if (!ok) failed.push(batch);
+            setAumMap(new Map([...cached, ...Object.entries(collected)]));
+            saveAumCache(collected);
+          }
+        });
+        await Promise.all(workers);
+        return failed.flat();
+      };
 
-      if (failed.length > 0) {
-        await new Promise(r => setTimeout(r, 2000));
-        for (const batch of failed) {
-          await fetchBatch(batch);
-          setAumMap(new Map(Object.entries(collected)));
-        }
+      let remaining = await runRound(entries);
+      const backoffs = [3000, 6000];
+      for (const delay of backoffs) {
+        if (remaining.length === 0) break;
+        await new Promise(r => setTimeout(r, delay));
+        remaining = await runRound(remaining);
       }
     };
 
