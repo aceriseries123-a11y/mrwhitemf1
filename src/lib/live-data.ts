@@ -217,6 +217,19 @@ export function filterActiveSchemes(schemes: AMFIScheme[]): AMFIScheme[] {
       return false;
     }
 
+    // Exclude Investor Education Fund (I.E.F.) / unclaimed-amount escrow
+    // schemes. These are SEBI-mandated regulatory holding accounts for
+    // unclaimed redemption/dividend/brokerage amounts — not retail-
+    // investable funds. They carry "Direct" / "Growth" in their AMFI scheme
+    // name (so the usual Direct-Growth filter doesn't catch them), have no
+    // real ISIN, and show flat/zero NAV movement since nobody can buy units.
+    // Without this filter they pollute rankings with meaningless near-zero
+    // scores and create false "AUM missing" noise (Kuvera correctly has no
+    // record for them, since there's nothing to track).
+    if (/\bI\.?E\.?F\.?\b/i.test(nameUpper) || nameUpper.includes("UNCLAIMED")) {
+      return false;
+    }
+
     return true;
   });
 }
