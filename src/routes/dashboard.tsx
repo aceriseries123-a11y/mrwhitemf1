@@ -239,8 +239,8 @@ function DashboardPage() {
 
       if (entries.length === 0) return; // everything already cached
 
-      const BATCH = 18; // must match server MAX_FUNDS — see scheme-aum.ts subrequest-limit note
-      const CONCURRENCY = 10; // safe to raise — each request is now independently capped at ≤36 subrequests
+      const BATCH = 14; // must match server MAX_FUNDS — see scheme-aum.ts subrequest-limit note
+      const CONCURRENCY = 10; // safe — each request is now independently capped at ≤42 subrequests
       const collected: Record<string, number> = {};
 
       const fetchBatch = async (batch: string[]): Promise<boolean> => {
@@ -379,7 +379,7 @@ function DashboardPage() {
             Performance <span className="text-foreground">40%</span> · Consistency <span className="text-foreground">30%</span> · Risk <span className="text-foreground">20%</span> · Benchmark Skill <span className="text-foreground">10%</span>
             &nbsp;·&nbsp;Portfolio Quality &amp; Manager Quality: <span className="text-muted-foreground italic">Coming Soon</span> (removed from scoring until real data available)
             &nbsp;·&nbsp;<span className="font-bold text-cyan">Avg Cal-Yr Ret</span> = mean of each calendar year's return · <span className="font-bold text-cyan">Rolling 1Y Avg</span> = mean of every rolling 1Y return window
-            &nbsp;·&nbsp;<span className="font-bold text-cyan">Fund Size</span> = AUM in ₹ Cr via Kuvera, cached 24h (auto-retries on reload for funds still missing)
+            &nbsp;·&nbsp;<span className="font-bold text-cyan">Fund Size</span> = AUM in ₹ Cr via Kuvera + mfdata.in fallback, cached 24h (auto-retries on reload for funds still missing)
           </p>
         </div>
 
@@ -433,7 +433,7 @@ function DashboardPage() {
                           {aum != null
                             ? <span className="font-mono text-[11px] tabular-nums text-foreground">{fmtAUM(aum)}</span>
                             : <span className="font-mono text-[10px] text-muted-foreground" title={
-                                !aumLoaded ? "Loading AUM…" : (f.isin || f.isin2) ? "Not found in Kuvera AUM index" : "No ISIN in AMFI data for this scheme"
+                                !aumLoaded ? "Loading AUM…" : "Not found in Kuvera or mfdata.in — no record under any matched identifier"
                               }>
                                 {aumLoaded ? "—" : <Loader2 className="inline h-3 w-3 animate-spin" />}
                               </span>}
@@ -474,7 +474,7 @@ function DashboardPage() {
         <p className="text-[10px] leading-relaxed text-muted-foreground">
           <span className="text-foreground font-semibold">Avg Cal-Yr Ret</span> = arithmetic mean of each calendar year's Jan→Dec simple return. Hover cell to see per-year values.
           <span className="text-foreground font-semibold ml-2">Rolling 1Y Avg</span> = mean of ALL rolling 1-year point-to-point returns (every trading day as endpoint).
-          <span className="text-foreground font-semibold ml-2">Fund Size</span> = AUM via Kuvera (matched by AMFI ISIN), cached locally for 24h once resolved. The app retries missing funds across up to 3 rounds with backoff each session, and resolved values persist across reloads — so coverage improves over repeated visits within the same day rather than re-fighting the same rate limits from zero. Some funds may still show "—" if Kuvera has no record under either ISIN AMFI publishes for that scheme.
+          <span className="text-foreground font-semibold ml-2">Fund Size</span> = AUM via a two-source fallback chain — Kuvera first (by AMFI ISIN), then mfdata.in (by AMFI scheme code) for funds Kuvera doesn't track — cached locally for 24h once resolved. The app retries missing funds across up to 3 rounds with backoff each session, and resolved values persist across reloads, so coverage improves over repeated visits within the same day. Some funds may still show "—" if neither source has a record for that scheme.
         </p>
       </div>
     </AppShell>

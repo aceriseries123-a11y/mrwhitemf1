@@ -186,8 +186,8 @@ function FundExplorer() {
 
       if (entries.length === 0) return;
 
-      const BATCH = 18; // must match server MAX_FUNDS — see scheme-aum.ts subrequest-limit note
-      const CONCURRENCY = 10; // safe to raise — each request is now independently capped at ≤36 subrequests
+      const BATCH = 14; // must match server MAX_FUNDS — see scheme-aum.ts subrequest-limit note
+      const CONCURRENCY = 10; // safe — each request is now independently capped at ≤42 subrequests
       const collected: Record<string, number> = {};
 
       const fetchBatch = async (batch: string[]): Promise<boolean> => {
@@ -311,7 +311,7 @@ function FundExplorer() {
             <span><span className="text-cyan font-bold">Explore Score</span> = Sharpe(20%)+Sortino(15%)+Alpha(15%)+IR(15%)+RAR(15%)+Upside(10%)+Downside(10%)</span>
             <span><span className="text-positive font-bold">↑ Upside Cap</span> · full-green bar · <span className="text-positive">+1</span> if ≥100% (captured more rally than benchmark) · <span className="text-negative">-1</span> if &lt;100%</span>
             <span><span className="text-negative font-bold">↓ Downside Cap</span> · full-red bar · <span className="text-positive">+1</span> if ≤100% (fell less than benchmark) · <span className="text-negative">-1</span> if &gt;100%</span>
-            <span><span className="text-foreground">Fund Size</span>: AUM in ₹ Cr fetched via Kuvera — loaded after scoring completes</span>
+            <span><span className="text-foreground">Fund Size</span>: AUM in ₹ Cr via Kuvera + mfdata.in fallback — loaded after scoring completes</span>
           </div>
         </div>
 
@@ -373,8 +373,7 @@ function FundExplorer() {
                           if (aum != null) {
                             return <span className="font-mono text-[11px] tabular-nums text-foreground">{aum >= 10000 ? `₹${(aum/1000).toFixed(1)}K Cr` : aum >= 1000 ? `₹${(aum/1000).toFixed(2)}K Cr` : `₹${aum.toFixed(0)} Cr`}</span>;
                           }
-                          const hasIsin = !!(f.isin || f.isin2);
-                          return <span className="font-mono text-[10px] text-muted-foreground" title={hasIsin ? "Not found in Kuvera AUM index" : "No ISIN in AMFI data for this scheme"}>—</span>;
+                          return <span className="font-mono text-[10px] text-muted-foreground" title="Not found in Kuvera or mfdata.in — no record under any matched identifier">—</span>;
                         })()}
                       </td>
                       <td className="p-3 text-right">

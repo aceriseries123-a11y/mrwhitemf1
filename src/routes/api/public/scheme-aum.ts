@@ -1,42 +1,46 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 /**
- * scheme-aum — AUM lookup via Kuvera/captnemo
+ * scheme-aum — AUM lookup with a two-source fallback chain
  *
  * Request format:
  *   ?funds=CODE1:ISIN_A|ISIN_B,CODE2:ISIN_C,...
  *
- * Each fund can carry up to 2 candidate ISINs (AMFI NAVAll col1 + col2 — the
- * "growth" ISIN isn't always in the same column for every scheme variant).
- * The server tries each candidate ISIN in order and uses the first that
- * returns a valid AUM. Response is keyed by schemeCode directly:
+ * Source 1 — Kuvera (via captnemo mirror), by ISIN:
+ *   https://mf.captnemo.in/kuvera/{isin}  →  [{ aum: <lakhs> }]
+ *   Tries up to 2 candidate ISINs (AMFI NAVAll col1 + col2) per fund.
+ *   Kuvera only lists funds it actually distributes — it does NOT cover
+ *   every AMFI scheme, so a clean "not found" here is expected for a
+ *   genuine subset of funds, not a failure.
+ *
+ * Source 2 — mfdata.in, by AMFI scheme code (fallback, tried only if
+ * Source 1 returns nothing for a fund):
+ *   https://mfdata.in/api/v1/schemes/{schemeCode}  →  { data: { aum_cr } }
+ *   Broader coverage (14,000+ schemes via its own multi-source pipeline),
+ *   keyed directly by AMFI code so no ISIN matching is needed at all.
+ *
+ * Each fund tries Source 1's ISINs first (early exit on first success),
+ * then falls back to Source 2 only if still unresolved. Response is keyed
+ * by schemeCode directly:
  *
  *   { "120503": 45821, "118989": 12044, ... }
  *
- * Kuvera endpoint: https://mf.captnemo.in/kuvera/{isin}
- * Returns array: [{ aum: <lakhs>, ... }]  → crores = round(lakhs / 100)
- *
- * In-memory cache per ISIN: TTL 24h.
+ * In-memory cache: TTL 24h, keyed per (source, identifier) pair so a
+ * Source 1 miss and Source 2 hit are cached independently.
  *
  * *** CRITICAL: Cloudflare Workers subrequest limit ***
  * This app deploys on Cloudflare Workers. The Workers FREE plan hard-caps
  * EVERY invocation at 50 external subrequests — exceeding it throws
  * "Too many subrequests" and the ENTIRE invocation fails, silently
- * dropping every fund in that request (not just the ones over the limit).
- * Each fund can need up to 2 sequential fetches (primary ISIN + fallback),
- * so MAX_FUNDS must stay well under 50/2=25 to leave safety margin.
- * This was the root cause of the ~950/1350 ceiling: the previous
- * MAX_FUNDS=60 allowed up to 120 subrequests per invocation — more than
- * double the limit — so any batch where enough funds needed BOTH ISIN
- * attempts would blow the cap and the whole batch silently vanished,
- * with zero error visible to the client (fetch() just resolves with a
- * 500/exception that gets swallowed by the try/catch on the client side).
+ * dropping every fund in that request. Each fund can now need up to 3
+ * sequential fetches (2 Kuvera ISIN attempts + 1 mfdata.in fallback), so
+ * MAX_FUNDS is kept low enough that 3× MAX_FUNDS stays safely under 50.
  */
 
 type Cached = { at: number; cr: number | null };
-const isinCache = new Map<string, Cached>();
+const cache = new Map<string, Cached>(); // key: "kuvera:{isin}" or "mfdata:{code}"
 const TTL_MS = 24 * 60 * 60 * 1000;
-const MAX_FUNDS = 18; // 18 funds × up to 2 ISINs = ≤36 subrequests, safely under the 50 cap
+const MAX_FUNDS = 14; // 14 funds × up to 3 fetches = ≤42 subrequests, safely under the 50 cap
 const TIMEOUT_MS = 7000;
 
 function withTimeout(p: Promise<Response>, ms: number): Promise<Response> {
@@ -47,7 +51,18 @@ function withTimeout(p: Promise<Response>, ms: number): Promise<Response> {
   return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 }
 
-async function fetchAumByIsin(isin: string): Promise<number | null> {
+async function getCached(key: string, fetcher: () => Promise<number | null>): Promise<number | null> {
+  const now = Date.now();
+  const hit = cache.get(key);
+  if (hit && now - hit.at < TTL_MS) return hit.cr;
+  const cr = await fetcher();
+  cache.set(key, { at: now, cr });
+  return cr;
+}
+
+// ─── Source 1: Kuvera (by ISIN) ────────────────────────────────────────────────
+
+async function fetchAumFromKuvera(isin: string): Promise<number | null> {
   try {
     const r = await withTimeout(
       fetch(`https://mf.captnemo.in/kuvera/${isin}`, {
@@ -67,22 +82,38 @@ async function fetchAumByIsin(isin: string): Promise<number | null> {
   }
 }
 
-async function getAumByIsinCached(isin: string): Promise<number | null> {
-  const now = Date.now();
-  const hit = isinCache.get(isin);
-  if (hit && now - hit.at < TTL_MS) return hit.cr;
-  const cr = await fetchAumByIsin(isin);
-  isinCache.set(isin, { at: now, cr });
-  return cr;
+// ─── Source 2: mfdata.in (by AMFI scheme code) — fallback ────────────────────
+
+async function fetchAumFromMfdata(schemeCode: string): Promise<number | null> {
+  try {
+    const r = await withTimeout(
+      fetch(`https://mfdata.in/api/v1/schemes/${schemeCode}`, {
+        headers: { "User-Agent": "QuantFundTerminal/1.0", "Accept": "application/json" },
+      }),
+      TIMEOUT_MS
+    );
+    if (!r.ok) return null;
+    const json = (await r.json()) as { status?: string; data?: { aum_cr?: number | string } };
+    if (json?.status !== "success" || !json.data) return null;
+    const cr = Number(json.data.aum_cr);
+    if (!Number.isFinite(cr) || cr <= 0) return null;
+    return Math.round(cr);
+  } catch {
+    return null;
+  }
 }
 
-/** Try each candidate ISIN in order; stop at first success. */
-async function resolveAumForFund(isins: string[]): Promise<number | null> {
+/**
+ * Resolve AUM for one fund: try Kuvera with each candidate ISIN (early exit
+ * on first success), then fall back to mfdata.in by scheme code if Kuvera
+ * had no record under any ISIN.
+ */
+async function resolveAumForFund(schemeCode: string, isins: string[]): Promise<number | null> {
   for (const isin of isins) {
-    const cr = await getAumByIsinCached(isin);
+    const cr = await getCached(`kuvera:${isin}`, () => fetchAumFromKuvera(isin));
     if (cr != null) return cr;
   }
-  return null;
+  return getCached(`mfdata:${schemeCode}`, () => fetchAumFromMfdata(schemeCode));
 }
 
 export const Route = createFileRoute("/api/public/scheme-aum")({
@@ -114,7 +145,7 @@ export const Route = createFileRoute("/api/public/scheme-aum")({
         // Resolve all funds in parallel; within each fund, ISINs tried sequentially
         // with early exit (usually only 1 fetch unless the first ISIN fails).
         const results = await Promise.all(
-          funds.map(async f => [f.code, await resolveAumForFund(f.isins)] as const)
+          funds.map(async f => [f.code, await resolveAumForFund(f.code, f.isins)] as const)
         );
 
         const map: Record<string, number> = {};
