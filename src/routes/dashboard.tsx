@@ -239,8 +239,8 @@ function DashboardPage() {
 
       if (entries.length === 0) return; // everything already cached
 
-      const BATCH = 40;
-      const CONCURRENCY = 6;
+      const BATCH = 18; // must match server MAX_FUNDS — see scheme-aum.ts subrequest-limit note
+      const CONCURRENCY = 10; // safe to raise — each request is now independently capped at ≤36 subrequests
       const collected: Record<string, number> = {};
 
       const fetchBatch = async (batch: string[]): Promise<boolean> => {

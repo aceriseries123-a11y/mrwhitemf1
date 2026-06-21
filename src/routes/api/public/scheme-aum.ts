@@ -17,22 +17,34 @@ import { createFileRoute } from "@tanstack/react-router";
  * Returns array: [{ aum: <lakhs>, ... }]  → crores = round(lakhs / 100)
  *
  * In-memory cache per ISIN: TTL 24h.
- * Max 60 funds per request (each fund tries up to 2 ISINs = up to 120 fetches,
- * all run in parallel across funds AND across each fund's candidate list is
- * sequential-with-early-exit to avoid wasting a call once one ISIN succeeds).
+ *
+ * *** CRITICAL: Cloudflare Workers subrequest limit ***
+ * This app deploys on Cloudflare Workers. The Workers FREE plan hard-caps
+ * EVERY invocation at 50 external subrequests — exceeding it throws
+ * "Too many subrequests" and the ENTIRE invocation fails, silently
+ * dropping every fund in that request (not just the ones over the limit).
+ * Each fund can need up to 2 sequential fetches (primary ISIN + fallback),
+ * so MAX_FUNDS must stay well under 50/2=25 to leave safety margin.
+ * This was the root cause of the ~950/1350 ceiling: the previous
+ * MAX_FUNDS=60 allowed up to 120 subrequests per invocation — more than
+ * double the limit — so any batch where enough funds needed BOTH ISIN
+ * attempts would blow the cap and the whole batch silently vanished,
+ * with zero error visible to the client (fetch() just resolves with a
+ * 500/exception that gets swallowed by the try/catch on the client side).
  */
 
 type Cached = { at: number; cr: number | null };
 const isinCache = new Map<string, Cached>();
 const TTL_MS = 24 * 60 * 60 * 1000;
-const MAX_FUNDS = 60;
+const MAX_FUNDS = 18; // 18 funds × up to 2 ISINs = ≤36 subrequests, safely under the 50 cap
 const TIMEOUT_MS = 7000;
 
 function withTimeout(p: Promise<Response>, ms: number): Promise<Response> {
-  return Promise.race([
-    p,
-    new Promise<Response>((_, reject) => setTimeout(() => reject(new Error("timeout")), ms)),
-  ]);
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<Response>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("timeout")), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 }
 
 async function fetchAumByIsin(isin: string): Promise<number | null> {
