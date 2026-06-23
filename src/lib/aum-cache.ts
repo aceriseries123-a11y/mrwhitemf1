@@ -21,7 +21,7 @@
  *   • Save is best-effort (quota exceeded → no-op)
  */
 
-const KEY = "qf-aum-cache-v1";
+const KEY = "qf-aum-cache-v2"; // v2: mfdata.in bulk endpoint fix (v1 had wrong endpoint → all nulls)
 const TTL_MS = 24 * 60 * 60 * 1000;
 
 interface CachedEntry {

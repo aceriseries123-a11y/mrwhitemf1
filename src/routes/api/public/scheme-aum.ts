@@ -1,68 +1,65 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 /**
- * scheme-aum — AUM lookup with a two-source fallback chain
+ * scheme-aum — AUM lookup: Kuvera (by ISIN) → mfdata.in bulk (by AMFI code)
  *
  * Request format:
  *   ?funds=CODE1:ISIN_A|ISIN_B,CODE2:ISIN_C,...
  *
- * Source 1 — Kuvera (via captnemo mirror), by ISIN:
- *   https://mf.captnemo.in/kuvera/{isin}  →  [{ aum: <lakhs> }]
- *   Tries up to 2 candidate ISINs (AMFI NAVAll col1 + col2) per fund.
- *   Kuvera only lists funds it actually distributes — it does NOT cover
- *   every AMFI scheme, so a clean "not found" here is expected for a
- *   genuine subset of funds, not a failure.
+ * Resolution order per fund:
+ *   1. Kuvera/captnemo by ISIN col1  (early exit on success)
+ *   2. Kuvera/captnemo by ISIN col2  (early exit on success)
+ *   3. mfdata.in bulk POST by scheme code (only for funds still unresolved
+ *      after both Kuvera attempts — batched in a SINGLE subrequest for all
+ *      remaining funds in the request, not one per fund)
  *
- * Source 2 — mfdata.in, by AMFI scheme code (fallback, tried only if
- * Source 1 returns nothing for a fund):
- *   https://mfdata.in/api/v1/schemes/{schemeCode}  →  { data: { aum_cr } }
- *   Broader coverage (14,000+ schemes via its own multi-source pipeline),
- *   keyed directly by AMFI code so no ISIN matching is needed at all.
+ * Kuvera endpoint:  https://mf.captnemo.in/kuvera/{isin}
+ *   → [{aum: <lakhs>}]   crores = round(lakhs / 100)
+ *   Only covers funds listed on Kuvera's platform (curated, ~82% of AMFI).
  *
- * Each fund tries Source 1's ISINs first (early exit on first success),
- * then falls back to Source 2 only if still unresolved. Response is keyed
- * by schemeCode directly:
+ * mfdata.in endpoint: POST https://mfdata.in/api/v1/schemes/bulk
+ *   → {status, data: [{scheme_code, aum_cr}]}
+ *   Covers 14,000+ schemes; aum_cr is already in crores.
+ *   NOTE: the single-scheme GET /api/v1/schemes/{code} does NOT include
+ *   aum_cr — only the bulk/list endpoints expose it. That was the bug in
+ *   the previous implementation (silent null on every mfdata call).
  *
- *   { "120503": 45821, "118989": 12044, ... }
+ * *** Cloudflare Workers subrequest budget ***
+ * Free plan: hard cap of 50 subrequests per invocation.
+ * Per-fund breakdown:
+ *   Step 1 & 2: up to 2 Kuvera fetches per fund (sequential, early-exit)
+ *   Step 3: 1 bulk POST for ALL remaining funds in the batch (not per-fund)
  *
- * In-memory cache: TTL 24h, keyed per (source, identifier) pair so a
- * Source 1 miss and Source 2 hit are cached independently.
+ * Worst case: N funds × 2 Kuvera attempts + 1 mfdata bulk = 2N + 1 subs.
+ * With MAX_FUNDS = 20: up to 20×2 + 1 = 41 subrequests. Safe under 50.
+ * (Average case is much less since ~82% of funds resolve on Kuvera step 1.)
  *
- * *** CRITICAL: Cloudflare Workers subrequest limit ***
- * This app deploys on Cloudflare Workers. The Workers FREE plan hard-caps
- * EVERY invocation at 50 external subrequests — exceeding it throws
- * "Too many subrequests" and the ENTIRE invocation fails, silently
- * dropping every fund in that request. Each fund can now need up to 3
- * sequential fetches (2 Kuvera ISIN attempts + 1 mfdata.in fallback), so
- * MAX_FUNDS is kept low enough that 3× MAX_FUNDS stays safely under 50.
+ * In-memory cache: TTL 24h per ISIN (Kuvera) and per code (mfdata).
  */
 
 type Cached = { at: number; cr: number | null };
-const cache = new Map<string, Cached>(); // key: "kuvera:{isin}" or "mfdata:{code}"
+const kuveraCache = new Map<string, Cached>(); // key = isin
+const mfdataCache = new Map<string, Cached>(); // key = schemeCode string
 const TTL_MS = 24 * 60 * 60 * 1000;
-const MAX_FUNDS = 14; // 14 funds × up to 3 fetches = ≤42 subrequests, safely under the 50 cap
-const TIMEOUT_MS = 7000;
+const MAX_FUNDS = 20; // 20×2 Kuvera + 1 mfdata bulk = 41 subs max, safely under 50
+const TIMEOUT_MS = 8000;
 
 function withTimeout(p: Promise<Response>, ms: number): Promise<Response> {
-  let timer: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<Response>((_, reject) => {
-    timer = setTimeout(() => reject(new Error("timeout")), ms);
-  });
-  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
+  let t: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    p,
+    new Promise<Response>((_, rej) => { t = setTimeout(() => rej(new Error("timeout")), ms); }),
+  ]).finally(() => clearTimeout(t));
 }
 
-async function getCached(key: string, fetcher: () => Promise<number | null>): Promise<number | null> {
+// ─── Source 1: Kuvera / captnemo (by ISIN) ───────────────────────────────────
+
+async function fetchKuvera(isin: string): Promise<number | null> {
   const now = Date.now();
-  const hit = cache.get(key);
+  const hit = kuveraCache.get(isin);
   if (hit && now - hit.at < TTL_MS) return hit.cr;
-  const cr = await fetcher();
-  cache.set(key, { at: now, cr });
-  return cr;
-}
 
-// ─── Source 1: Kuvera (by ISIN) ────────────────────────────────────────────────
-
-async function fetchAumFromKuvera(isin: string): Promise<number | null> {
+  let cr: number | null = null;
   try {
     const r = await withTimeout(
       fetch(`https://mf.captnemo.in/kuvera/${isin}`, {
@@ -71,49 +68,54 @@ async function fetchAumFromKuvera(isin: string): Promise<number | null> {
       }),
       TIMEOUT_MS
     );
-    if (!r.ok) return null;
-    const arr = (await r.json()) as Array<{ aum?: number | string }>;
-    if (!Array.isArray(arr) || arr.length === 0) return null;
-    const lakhs = Number(arr[0]?.aum);
-    if (!Number.isFinite(lakhs) || lakhs <= 0) return null;
-    return Math.round(lakhs / 100);
-  } catch {
-    return null;
-  }
+    if (r.ok) {
+      const arr = (await r.json()) as Array<{ aum?: number | string }>;
+      if (Array.isArray(arr) && arr.length > 0) {
+        const lakhs = Number(arr[0]?.aum);
+        if (Number.isFinite(lakhs) && lakhs > 0) cr = Math.round(lakhs / 100);
+      }
+    }
+  } catch { /* timeout/network */ }
+
+  kuveraCache.set(isin, { at: now, cr });
+  return cr;
 }
 
-// ─── Source 2: mfdata.in (by AMFI scheme code) — fallback ────────────────────
+// ─── Source 2: mfdata.in bulk POST (by AMFI scheme codes) ───────────────────
+//
+// The single-scheme GET /api/v1/schemes/{code} does NOT expose aum_cr.
+// Only the BULK POST endpoint returns aum_cr in its response array.
+// One POST call resolves ALL unresolved codes in the batch → 1 subrequest.
 
-async function fetchAumFromMfdata(schemeCode: string): Promise<number | null> {
+async function fetchMfdataBulk(codes: string[]): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  if (codes.length === 0) return result;
   try {
     const r = await withTimeout(
-      fetch(`https://mfdata.in/api/v1/schemes/${schemeCode}`, {
-        headers: { "User-Agent": "QuantFundTerminal/1.0", "Accept": "application/json" },
+      fetch("https://mfdata.in/api/v1/schemes/bulk", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "QuantFundTerminal/1.0",
+          "Accept": "application/json",
+        },
+        body: JSON.stringify({ scheme_codes: codes.map(Number) }),
       }),
       TIMEOUT_MS
     );
-    if (!r.ok) return null;
-    const json = (await r.json()) as { status?: string; data?: { aum_cr?: number | string } };
-    if (json?.status !== "success" || !json.data) return null;
-    const cr = Number(json.data.aum_cr);
-    if (!Number.isFinite(cr) || cr <= 0) return null;
-    return Math.round(cr);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Resolve AUM for one fund: try Kuvera with each candidate ISIN (early exit
- * on first success), then fall back to mfdata.in by scheme code if Kuvera
- * had no record under any ISIN.
- */
-async function resolveAumForFund(schemeCode: string, isins: string[]): Promise<number | null> {
-  for (const isin of isins) {
-    const cr = await getCached(`kuvera:${isin}`, () => fetchAumFromKuvera(isin));
-    if (cr != null) return cr;
-  }
-  return getCached(`mfdata:${schemeCode}`, () => fetchAumFromMfdata(schemeCode));
+    if (!r.ok) return result;
+    const json = (await r.json()) as {
+      status?: string;
+      data?: Array<{ scheme_code?: number | string; aum_cr?: number | string }>;
+    };
+    if (json?.status !== "success" || !Array.isArray(json.data)) return result;
+    for (const item of json.data) {
+      const cr = Number(item.aum_cr);
+      const code = String(item.scheme_code ?? "");
+      if (code && Number.isFinite(cr) && cr > 0) result.set(code, Math.round(cr));
+    }
+  } catch { /* timeout/network */ }
+  return result;
 }
 
 export const Route = createFileRoute("/api/public/scheme-aum")({
@@ -123,7 +125,6 @@ export const Route = createFileRoute("/api/public/scheme-aum")({
         const url = new URL(request.url);
         const raw = url.searchParams.get("funds") || "";
 
-        // Parse "CODE:ISIN_A|ISIN_B,CODE2:ISIN_C" into [{code, isins}]
         const funds = raw
           .split(",")
           .map(s => s.trim())
@@ -132,7 +133,6 @@ export const Route = createFileRoute("/api/public/scheme-aum")({
             const [code, isinStr] = entry.split(":");
             if (!code || !isinStr) return null;
             const isins = isinStr.split("|").filter(i => i.startsWith("INF"));
-            if (isins.length === 0) return null;
             return { code: code.trim(), isins };
           })
           .filter((x): x is { code: string; isins: string[] } => x != null)
@@ -142,16 +142,42 @@ export const Route = createFileRoute("/api/public/scheme-aum")({
           return Response.json({}, { headers: { "Cache-Control": "public, max-age=3600" } });
         }
 
-        // Resolve all funds in parallel; within each fund, ISINs tried sequentially
-        // with early exit (usually only 1 fetch unless the first ISIN fails).
-        const results = await Promise.all(
-          funds.map(async f => [f.code, await resolveAumForFund(f.code, f.isins)] as const)
-        );
+        // Phase 1: try Kuvera for all funds in parallel (early exit per fund)
+        const now = Date.now();
+        const resolved = new Map<string, number>();
+        const unresolved: string[] = []; // codes that need mfdata.in fallback
+
+        await Promise.all(funds.map(async f => {
+          // Check mfdata cache first to skip Kuvera if we already have a result
+          const mfHit = mfdataCache.get(f.code);
+          if (mfHit && now - mfHit.at < TTL_MS && mfHit.cr != null) {
+            resolved.set(f.code, mfHit.cr);
+            return;
+          }
+
+          // Try Kuvera ISINs
+          for (const isin of f.isins) {
+            const cr = await fetchKuvera(isin);
+            if (cr != null) { resolved.set(f.code, cr); return; }
+          }
+
+          // Mark as unresolved → needs mfdata fallback
+          unresolved.push(f.code);
+        }));
+
+        // Phase 2: ONE bulk call to mfdata.in for all unresolved funds
+        if (unresolved.length > 0) {
+          const mfResults = await fetchMfdataBulk(unresolved);
+          const nowMf = Date.now();
+          for (const code of unresolved) {
+            const cr = mfResults.get(code) ?? null;
+            mfdataCache.set(code, { at: nowMf, cr });
+            if (cr != null) resolved.set(code, cr);
+          }
+        }
 
         const map: Record<string, number> = {};
-        for (const [code, cr] of results) {
-          if (cr != null) map[code] = cr;
-        }
+        for (const [code, cr] of resolved) map[code] = cr;
 
         return Response.json(map, {
           headers: {

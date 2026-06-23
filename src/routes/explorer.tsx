@@ -186,7 +186,7 @@ function FundExplorer() {
 
       if (entries.length === 0) return;
 
-      const BATCH = 14; // must match server MAX_FUNDS — see scheme-aum.ts subrequest-limit note
+      const BATCH = 20; // must match server MAX_FUNDS — see scheme-aum.ts subrequest-limit note
       const CONCURRENCY = 10; // safe — each request is now independently capped at ≤42 subrequests
       const collected: Record<string, number> = {};
 
