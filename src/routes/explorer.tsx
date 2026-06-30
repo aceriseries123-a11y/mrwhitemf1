@@ -162,74 +162,40 @@ function FundExplorer() {
   const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
   useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
 
-  // AUM map — fires once Dashboard's scoring pass is fully complete.
-  // Persistent localStorage cache (24h): previously-resolved funds appear
-  // instantly; only genuinely-missing funds get fetched, and successes are
-  // saved immediately so they survive page reloads and future sessions.
+  // AUM — dual parallel sources, same logic as dashboard.tsx
   const [aumMap, setAumMap] = useState<Map<string, number>>(loadAumCache);
   const aumFetchedRef = useRef(false);
   useEffect(() => {
-    if (!isScoringDone() || aumFetchedRef.current) return;
-    if (allRanked.length === 0) return;
+    if (!isScoringDone() || aumFetchedRef.current || allRanked.length === 0) return;
     aumFetchedRef.current = true;
-
     const cached = loadAumCache();
-
-    const runFetch = async () => {
-      const entries = allRanked
-        .filter(f => !cached.has(f.schemeCode))
-        .map(f => {
-          const cands = [f.isin, f.isin2].filter((x): x is string => !!x && x.startsWith("INF"));
-          return cands.length ? `${f.schemeCode}:${cands.join("|")}` : null;
-        })
-        .filter((x): x is string => x != null);
-
-      if (entries.length === 0) return;
-
-      const BATCH = 20; // must match server MAX_FUNDS — see scheme-aum.ts subrequest-limit note
-      const CONCURRENCY = 10; // safe — each request is now independently capped at ≤42 subrequests
-      const collected: Record<string, number> = {};
-
-      const fetchBatch = async (batch: string[]): Promise<boolean> => {
-        try {
-          const res = await fetch(`/api/public/scheme-aum?funds=${batch.join(",")}`);
-          if (!res.ok) return false;
-          const data = await res.json() as Record<string, number>;
-          Object.assign(collected, data);
-          return true;
-        } catch {
-          return false;
-        }
-      };
-
-      const runRound = async (items: string[]): Promise<string[]> => {
-        const batches: string[][] = [];
-        for (let i = 0; i < items.length; i += BATCH) batches.push(items.slice(i, i + BATCH));
-        const failed: string[][] = [];
-        let cursor = 0;
-        const workers = Array.from({ length: CONCURRENCY }, async () => {
-          while (cursor < batches.length) {
-            const batch = batches[cursor++];
-            const ok = await fetchBatch(batch);
-            if (!ok) failed.push(batch);
-            setAumMap(new Map([...cached, ...Object.entries(collected)]));
-            saveAumCache(collected);
-          }
-        });
-        await Promise.all(workers);
-        return failed.flat();
-      };
-
-      let remaining = await runRound(entries);
-      const backoffs = [3000, 6000];
-      for (const delay of backoffs) {
-        if (remaining.length === 0) break;
-        await new Promise(r => setTimeout(r, delay));
-        remaining = await runRound(remaining);
-      }
+    const uncached = allRanked.filter(f => !cached.has(f.schemeCode));
+    if (uncached.length === 0) return;
+    const BATCH = 24, CONC = 8;
+    const collected: Record<string, number> = {};
+    const flush = () => { setAumMap(new Map([...cached, ...Object.entries(collected)])); saveAumCache(collected); };
+    const kuveraEntries = uncached.map(f => { const isins = [f.isin, f.isin2].filter((x): x is string => !!x && x.startsWith("INF")); return isins.length ? `${f.schemeCode}:${isins.join("|")}` : null; }).filter((x): x is string => x !== null);
+    const mfdataCodes = uncached.map(f => f.schemeCode);
+    const runBatched = async (items: string[], urlFn: (b: string[]) => string): Promise<string[]> => {
+      const batches: string[][] = []; for (let i = 0; i < items.length; i += BATCH) batches.push(items.slice(i, i + BATCH));
+      const failed: string[] = []; let cursor = 0;
+      await Promise.all(Array.from({ length: CONC }, async () => { while (cursor < batches.length) { const b = batches[cursor++]; try { const r = await fetch(urlFn(b)); if (r.ok) { Object.assign(collected, await r.json()); flush(); } else failed.push(...b); } catch { failed.push(...b); } } }));
+      return failed;
     };
-
-    runFetch();
+    (async () => {
+      const [kF, mF] = await Promise.all([
+        kuveraEntries.length > 0 ? runBatched(kuveraEntries, b => `/api/public/scheme-aum?funds=${b.join(",")}`) : Promise.resolve([]),
+        runBatched(mfdataCodes, b => `/api/public/scheme-aum-mfdata?codes=${b.join(",")}`),
+      ]);
+      const retry = [...kF, ...mF];
+      if (retry.length > 0) {
+        await new Promise(r => setTimeout(r, 4000));
+        await Promise.all([
+          retry.filter(s => s.includes(":")).length > 0 ? runBatched(retry.filter(s => s.includes(":")), b => `/api/public/scheme-aum?funds=${b.join(",")}`) : Promise.resolve([]),
+          retry.filter(s => !s.includes(":")).length > 0 ? runBatched(retry.filter(s => !s.includes(":")), b => `/api/public/scheme-aum-mfdata?codes=${b.join(",")}`) : Promise.resolve([]),
+        ]);
+      }
+    })();
   }, [allRanked.length]);
 
   const catPeersMap = useMemo(() => {
@@ -311,7 +277,7 @@ function FundExplorer() {
             <span><span className="text-cyan font-bold">Explore Score</span> = Sharpe(20%)+Sortino(15%)+Alpha(15%)+IR(15%)+RAR(15%)+Upside(10%)+Downside(10%)</span>
             <span><span className="text-positive font-bold">↑ Upside Cap</span> · full-green bar · <span className="text-positive">+1</span> if ≥100% (captured more rally than benchmark) · <span className="text-negative">-1</span> if &lt;100%</span>
             <span><span className="text-negative font-bold">↓ Downside Cap</span> · full-red bar · <span className="text-positive">+1</span> if ≤100% (fell less than benchmark) · <span className="text-negative">-1</span> if &gt;100%</span>
-            <span><span className="text-foreground">Fund Size</span>: AUM in ₹ Cr via Kuvera + mfdata.in fallback — loaded after scoring completes</span>
+            <span><span className="text-foreground">Fund Size</span>: AUM in ₹ Cr via Kuvera + mfdata.in (queried in parallel) — loaded after scoring completes</span>
           </div>
         </div>
 
@@ -339,7 +305,7 @@ function FundExplorer() {
                   <th className="p-3 font-medium text-muted-foreground">Fund</th>
                   <th className="p-3 font-medium text-muted-foreground">Category</th>
                   <SortTh label="Explore Score" k="exploreScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} accent title="7-component ratio score 0-100 (category-relative)" />
-                  <SortTh label="Fund Size" k="aum" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="AUM in ₹ Cr — fetched via Kuvera after scoring" />
+                  <SortTh label="Fund Size" k="aum" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="AUM via Kuvera + mfdata.in, queried in parallel — loaded after scoring completes" />
                   <SortTh label="Beta" k="beta" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Market sensitivity vs category benchmark" />
                   <SortTh label="Std Dev" k="stdDev" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Annualised volatility of daily returns" />
                   <SortTh label="Alpha (J)" k="jensensAlpha" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Jensen's Alpha = fund 3Y CAGR − (RFR + β × (bm−RFR))" />

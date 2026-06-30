@@ -204,92 +204,95 @@ function DashboardPage() {
   const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
   useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
 
-  // AUM fetch — fires once scoring is FULLY complete (markScoringDone() called
-  // by the category-scoring loop above, NOT the NAV-fetch-settled `done` flag,
-  // which becomes true before scoring even starts).
+
+  // ─── AUM Fetch ──────────────────────────────────────────────────────────────
+  // Fires once after scoring is fully complete (markScoringDone).
+  // Persistent 24h localStorage cache — resolved values survive page reloads.
   //
-  // Persistent cache (24h, localStorage): on mount we load any AUM values
-  // resolved on a PREVIOUS run/session and show them immediately — only
-  // funds NOT already cached get fetched. This means a fund that failed due
-  // to transient Kuvera rate-limiting on one run can succeed on a later run
-  // (or page reload) and then STAYS resolved for the rest of the day,
-  // instead of every reload re-fighting the same rate limits from zero.
-  //
-  // Bounded concurrency (6 in flight) + up to 3 retry rounds with increasing
-  // backoff (2s, 5s, 10s) for whatever's still missing after each round.
+  // TWO sources called IN PARALLEL for every fund:
+  //   A) /api/public/scheme-aum       — Kuvera by ISIN (both ISINs in parallel)
+  //   B) /api/public/scheme-aum-mfdata — mfdata.in by scheme code (all funds)
+  // First non-null result per fund wins. mfdata covers funds Kuvera doesn't.
+  // Funds with no ISIN are still sent to source B — no ISIN needed there.
+  // Each source has its own Worker invocation so subrequest budgets don't compete.
+  // Batch=24, Concurrency=8 per source. One retry at 4s for failed batches.
   const [aumMap, setAumMap] = useState<Map<string, number>>(loadAumCache);
   const aumFetchedRef = useRef(false);
   useEffect(() => {
     if (aumFetchedRef.current) return;
-    if (!isScoringDone()) return; // re-checked on every allRanked update via subscription below
+    if (!isScoringDone()) return;
     aumFetchedRef.current = true;
 
     const allFunds = getFullRankedList();
     const cached = loadAumCache();
+    const uncached = allFunds.filter(f => !cached.has(f.schemeCode));
+    if (uncached.length === 0) return;
 
-    const runFetch = async () => {
-      // Only fetch funds NOT already in the persistent cache
-      const entries = allFunds
-        .filter(f => !cached.has(f.schemeCode))
-        .map(f => {
-          const cands = [f.isin, f.isin2].filter((x): x is string => !!x && x.startsWith("INF"));
-          return cands.length ? `${f.schemeCode}:${cands.join("|")}` : null;
-        })
-        .filter((x): x is string => x != null);
+    const BATCH = 24;
+    const CONC  = 8;
+    const collected: Record<string, number> = {};
 
-      if (entries.length === 0) return; // everything already cached
+    const flush = () => {
+      setAumMap(new Map([...cached, ...Object.entries(collected)]));
+      saveAumCache(collected);
+    };
 
-      const BATCH = 20; // must match server MAX_FUNDS — see scheme-aum.ts subrequest-limit note
-      const CONCURRENCY = 10; // safe — each request is now independently capped at ≤42 subrequests
-      const collected: Record<string, number> = {};
+    const kuveraEntries = uncached
+      .map(f => {
+        const isins = [f.isin, f.isin2].filter((x): x is string => !!x && x.startsWith("INF"));
+        return isins.length ? `${f.schemeCode}:${isins.join("|")}` : null;
+      })
+      .filter((x): x is string => x !== null);
 
-      const fetchBatch = async (batch: string[]): Promise<boolean> => {
-        try {
-          const res = await fetch(`/api/public/scheme-aum?funds=${batch.join(",")}`);
-          if (!res.ok) return false;
-          const data = await res.json() as Record<string, number>;
-          Object.assign(collected, data);
-          return true;
-        } catch {
-          return false;
+    const mfdataCodes = uncached.map(f => f.schemeCode);
+
+    const runBatched = async (
+      items: string[],
+      urlFn: (batch: string[]) => string,
+    ): Promise<string[]> => {
+      const batches: string[][] = [];
+      for (let i = 0; i < items.length; i += BATCH) batches.push(items.slice(i, i + BATCH));
+      const failed: string[] = [];
+      let cursor = 0;
+      await Promise.all(Array.from({ length: CONC }, async () => {
+        while (cursor < batches.length) {
+          const batch = batches[cursor++];
+          try {
+            const res = await fetch(urlFn(batch));
+            if (res.ok) {
+              const data = await res.json() as Record<string, number>;
+              Object.assign(collected, data);
+              flush();
+            } else { failed.push(...batch); }
+          } catch { failed.push(...batch); }
         }
-      };
+      }));
+      return failed;
+    };
 
-      const runRound = async (items: string[]): Promise<string[]> => {
-        const batches: string[][] = [];
-        for (let i = 0; i < items.length; i += BATCH) batches.push(items.slice(i, i + BATCH));
-        const failed: string[][] = [];
-        let cursor = 0;
-        const workers = Array.from({ length: CONCURRENCY }, async () => {
-          while (cursor < batches.length) {
-            const batch = batches[cursor++];
-            const ok = await fetchBatch(batch);
-            if (!ok) failed.push(batch);
-            // Push partial results live + persist successes immediately
-            setAumMap(new Map([...cached, ...Object.entries(collected)]));
-            saveAumCache(collected);
-          }
-        });
-        await Promise.all(workers);
-        return failed.flat();
-      };
-
-      // Round 1
-      let remaining = await runRound(entries);
-      // Up to 2 more retry rounds with increasing backoff for transient failures
-      const backoffs = [3000, 6000];
-      for (const delay of backoffs) {
-        if (remaining.length === 0) break;
-        await new Promise(r => setTimeout(r, delay));
-        remaining = await runRound(remaining);
+    const run = async () => {
+      const [kFailed, mFailed] = await Promise.all([
+        kuveraEntries.length > 0
+          ? runBatched(kuveraEntries, b => `/api/public/scheme-aum?funds=${b.join(",")}`)
+          : Promise.resolve([]),
+        runBatched(mfdataCodes, b => `/api/public/scheme-aum-mfdata?codes=${b.join(",")}`),
+      ]);
+      const retry = [...kFailed, ...mFailed];
+      if (retry.length > 0) {
+        await new Promise(r => setTimeout(r, 4000));
+        const kRetry = retry.filter(s => s.includes(":"));
+        const mRetry = retry.filter(s => !s.includes(":"));
+        await Promise.all([
+          kRetry.length > 0 ? runBatched(kRetry, b => `/api/public/scheme-aum?funds=${b.join(",")}`) : Promise.resolve([]),
+          mRetry.length > 0 ? runBatched(mRetry, b => `/api/public/scheme-aum-mfdata?codes=${b.join(",")}`) : Promise.resolve([]),
+        ]);
       }
     };
 
-    runFetch();
+    run();
   }, [allRanked]);
 
-
-  const toggleSort = (k: SortKey) => {
+    const toggleSort = (k: SortKey) => {
     if (sortKey === k) setSortDir(d => d === "desc" ? "asc" : "desc");
     else { setSortKey(k); setSortDir("desc"); }
   };
@@ -379,7 +382,7 @@ function DashboardPage() {
             Performance <span className="text-foreground">40%</span> · Consistency <span className="text-foreground">30%</span> · Risk <span className="text-foreground">20%</span> · Benchmark Skill <span className="text-foreground">10%</span>
             &nbsp;·&nbsp;Portfolio Quality &amp; Manager Quality: <span className="text-muted-foreground italic">Coming Soon</span> (removed from scoring until real data available)
             &nbsp;·&nbsp;<span className="font-bold text-cyan">Avg Cal-Yr Ret</span> = mean of each calendar year's return · <span className="font-bold text-cyan">Rolling 1Y Avg</span> = mean of every rolling 1Y return window
-            &nbsp;·&nbsp;<span className="font-bold text-cyan">Fund Size</span> = AUM in ₹ Cr via Kuvera + mfdata.in fallback, cached 24h (auto-retries on reload for funds still missing)
+            &nbsp;·&nbsp;<span className="font-bold text-cyan">Fund Size</span> = AUM in ₹ Cr via Kuvera + mfdata.in (queried in parallel), cached 24h (auto-retries on reload for funds still missing)
           </p>
         </div>
 
@@ -397,7 +400,7 @@ function DashboardPage() {
                     <SortTh label="Category" k="poolCategory" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} right={false} />
                     <SortTh label="Fund Score" k="finalScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                     <SortTh label="NAV ₹" k="nav" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                    <SortTh label="Fund Size" k="aum" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="AUM via Kuvera — loaded after scoring completes" />
+                    <SortTh label="Fund Size" k="aum" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="AUM via Kuvera + mfdata.in, queried in parallel — loaded after scoring completes" />
                     <SortTh label="Avg Cal-Yr Ret" k="annualReturnAvg" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                     <SortTh label="Rolling 1Y Avg" k="rollingReturn1yAvg" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                   </tr>
@@ -474,7 +477,7 @@ function DashboardPage() {
         <p className="text-[10px] leading-relaxed text-muted-foreground">
           <span className="text-foreground font-semibold">Avg Cal-Yr Ret</span> = arithmetic mean of each calendar year's Jan→Dec simple return. Hover cell to see per-year values.
           <span className="text-foreground font-semibold ml-2">Rolling 1Y Avg</span> = mean of ALL rolling 1-year point-to-point returns (every trading day as endpoint).
-          <span className="text-foreground font-semibold ml-2">Fund Size</span> = AUM via a two-source fallback chain — Kuvera first (by AMFI ISIN), then mfdata.in (by AMFI scheme code) for funds Kuvera doesn't track — cached locally for 24h once resolved. The app retries missing funds across up to 3 rounds with backoff each session, and resolved values persist across reloads, so coverage improves over repeated visits within the same day. Some funds may still show "—" if neither source has a record for that scheme.
+          <span className="text-foreground font-semibold ml-2">Fund Size</span> = AUM queried from two independent sources in parallel — Kuvera (by AMFI ISIN) and mfdata.in (by AMFI scheme code) — whichever responds first is used, so funds Kuvera doesn't track can still resolve via mfdata.in. Cached locally for 24h once resolved; the app retries any still-missing funds once more after a short delay each session, and resolved values persist across reloads so coverage improves over repeated visits within the same day. Some funds may still show "—" if neither source has a record for that scheme.
         </p>
       </div>
     </AppShell>

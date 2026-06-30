@@ -24,6 +24,7 @@ import { Route as BacktestRouteImport } from './routes/backtest'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as FundIdRouteImport } from './routes/fund.$id'
 import { Route as ApiPublicSchemeTerRouteImport } from './routes/api/public/scheme-ter'
+import { Route as ApiPublicSchemeAumMfdataRouteImport } from './routes/api/public/scheme-aum-mfdata'
 import { Route as ApiPublicSchemeAumRouteImport } from './routes/api/public/scheme-aum'
 import { Route as ApiPublicNavBatchRouteImport } from './routes/api/public/nav-batch'
 import { Route as ApiPublicMarketTicksRouteImport } from './routes/api/public/market-ticks'
@@ -104,6 +105,12 @@ const ApiPublicSchemeTerRoute = ApiPublicSchemeTerRouteImport.update({
   path: '/api/public/scheme-ter',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicSchemeAumMfdataRoute =
+  ApiPublicSchemeAumMfdataRouteImport.update({
+    id: '/api/public/scheme-aum-mfdata',
+    path: '/api/public/scheme-aum-mfdata',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicSchemeAumRoute = ApiPublicSchemeAumRouteImport.update({
   id: '/api/public/scheme-aum',
   path: '/api/public/scheme-aum',
@@ -144,6 +151,7 @@ export interface FileRoutesByFullPath {
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
   '/api/public/nav-batch': typeof ApiPublicNavBatchRoute
   '/api/public/scheme-aum': typeof ApiPublicSchemeAumRoute
+  '/api/public/scheme-aum-mfdata': typeof ApiPublicSchemeAumMfdataRoute
   '/api/public/scheme-ter': typeof ApiPublicSchemeTerRoute
 }
 export interface FileRoutesByTo {
@@ -165,6 +173,7 @@ export interface FileRoutesByTo {
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
   '/api/public/nav-batch': typeof ApiPublicNavBatchRoute
   '/api/public/scheme-aum': typeof ApiPublicSchemeAumRoute
+  '/api/public/scheme-aum-mfdata': typeof ApiPublicSchemeAumMfdataRoute
   '/api/public/scheme-ter': typeof ApiPublicSchemeTerRoute
 }
 export interface FileRoutesById {
@@ -187,6 +196,7 @@ export interface FileRoutesById {
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
   '/api/public/nav-batch': typeof ApiPublicNavBatchRoute
   '/api/public/scheme-aum': typeof ApiPublicSchemeAumRoute
+  '/api/public/scheme-aum-mfdata': typeof ApiPublicSchemeAumMfdataRoute
   '/api/public/scheme-ter': typeof ApiPublicSchemeTerRoute
 }
 export interface FileRouteTypes {
@@ -210,6 +220,7 @@ export interface FileRouteTypes {
     | '/api/public/market-ticks'
     | '/api/public/nav-batch'
     | '/api/public/scheme-aum'
+    | '/api/public/scheme-aum-mfdata'
     | '/api/public/scheme-ter'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -231,6 +242,7 @@ export interface FileRouteTypes {
     | '/api/public/market-ticks'
     | '/api/public/nav-batch'
     | '/api/public/scheme-aum'
+    | '/api/public/scheme-aum-mfdata'
     | '/api/public/scheme-ter'
   id:
     | '__root__'
@@ -252,6 +264,7 @@ export interface FileRouteTypes {
     | '/api/public/market-ticks'
     | '/api/public/nav-batch'
     | '/api/public/scheme-aum'
+    | '/api/public/scheme-aum-mfdata'
     | '/api/public/scheme-ter'
   fileRoutesById: FileRoutesById
 }
@@ -274,6 +287,7 @@ export interface RootRouteChildren {
   ApiPublicMarketTicksRoute: typeof ApiPublicMarketTicksRoute
   ApiPublicNavBatchRoute: typeof ApiPublicNavBatchRoute
   ApiPublicSchemeAumRoute: typeof ApiPublicSchemeAumRoute
+  ApiPublicSchemeAumMfdataRoute: typeof ApiPublicSchemeAumMfdataRoute
   ApiPublicSchemeTerRoute: typeof ApiPublicSchemeTerRoute
 }
 
@@ -384,6 +398,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicSchemeTerRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/scheme-aum-mfdata': {
+      id: '/api/public/scheme-aum-mfdata'
+      path: '/api/public/scheme-aum-mfdata'
+      fullPath: '/api/public/scheme-aum-mfdata'
+      preLoaderRoute: typeof ApiPublicSchemeAumMfdataRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/scheme-aum': {
       id: '/api/public/scheme-aum'
       path: '/api/public/scheme-aum'
@@ -434,6 +455,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicMarketTicksRoute: ApiPublicMarketTicksRoute,
   ApiPublicNavBatchRoute: ApiPublicNavBatchRoute,
   ApiPublicSchemeAumRoute: ApiPublicSchemeAumRoute,
+  ApiPublicSchemeAumMfdataRoute: ApiPublicSchemeAumMfdataRoute,
   ApiPublicSchemeTerRoute: ApiPublicSchemeTerRoute,
 }
 export const routeTree = rootRouteImport
