@@ -17,6 +17,7 @@ import { AppShell } from "@/components/AppShell";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
 import { getFullRankedList, subscribeToRankedList, isScoringDone, type RankedFund } from "@/lib/fund-store";
 import { loadAumCache, saveAumCache } from "@/lib/aum-cache";
+import { fetchAumForFunds } from "@/lib/aum-fetch";
 import { QUANTFUND_CATEGORIES, categoryColor, type QuantFundCategory } from "@/lib/categories";
 import { computeExploreScore, computeRiskAdjReturn } from "@/lib/explore-metrics";
 
@@ -162,40 +163,22 @@ function FundExplorer() {
   const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
   useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
 
-  // AUM — dual parallel sources, same logic as dashboard.tsx
+  // AUM — direct browser-to-source fetch (both Kuvera + mfdata.in have CORS
+  // enabled), no Worker proxy/subrequest-budget involved. See aum-fetch.ts.
   const [aumMap, setAumMap] = useState<Map<string, number>>(loadAumCache);
   const aumFetchedRef = useRef(false);
   useEffect(() => {
     if (!isScoringDone() || aumFetchedRef.current || allRanked.length === 0) return;
     aumFetchedRef.current = true;
     const cached = loadAumCache();
-    const uncached = allRanked.filter(f => !cached.has(f.schemeCode));
+    const uncached = allRanked
+      .filter(f => !cached.has(f.schemeCode))
+      .map(f => ({ schemeCode: f.schemeCode, isin: f.isin, isin2: f.isin2 }));
     if (uncached.length === 0) return;
-    const BATCH = 24, CONC = 8;
-    const collected: Record<string, number> = {};
-    const flush = () => { setAumMap(new Map([...cached, ...Object.entries(collected)])); saveAumCache(collected); };
-    const kuveraEntries = uncached.map(f => { const isins = [f.isin, f.isin2].filter((x): x is string => !!x && x.startsWith("INF")); return isins.length ? `${f.schemeCode}:${isins.join("|")}` : null; }).filter((x): x is string => x !== null);
-    const mfdataCodes = uncached.map(f => f.schemeCode);
-    const runBatched = async (items: string[], urlFn: (b: string[]) => string): Promise<string[]> => {
-      const batches: string[][] = []; for (let i = 0; i < items.length; i += BATCH) batches.push(items.slice(i, i + BATCH));
-      const failed: string[] = []; let cursor = 0;
-      await Promise.all(Array.from({ length: CONC }, async () => { while (cursor < batches.length) { const b = batches[cursor++]; try { const r = await fetch(urlFn(b)); if (r.ok) { Object.assign(collected, await r.json()); flush(); } else failed.push(...b); } catch { failed.push(...b); } } }));
-      return failed;
-    };
-    (async () => {
-      const [kF, mF] = await Promise.all([
-        kuveraEntries.length > 0 ? runBatched(kuveraEntries, b => `/api/public/scheme-aum?funds=${b.join(",")}`) : Promise.resolve([]),
-        runBatched(mfdataCodes, b => `/api/public/scheme-aum-mfdata?codes=${b.join(",")}`),
-      ]);
-      const retry = [...kF, ...mF];
-      if (retry.length > 0) {
-        await new Promise(r => setTimeout(r, 4000));
-        await Promise.all([
-          retry.filter(s => s.includes(":")).length > 0 ? runBatched(retry.filter(s => s.includes(":")), b => `/api/public/scheme-aum?funds=${b.join(",")}`) : Promise.resolve([]),
-          retry.filter(s => !s.includes(":")).length > 0 ? runBatched(retry.filter(s => !s.includes(":")), b => `/api/public/scheme-aum-mfdata?codes=${b.join(",")}`) : Promise.resolve([]),
-        ]);
-      }
-    })();
+    fetchAumForFunds(uncached, (partial) => {
+      setAumMap(new Map([...cached, ...partial]));
+      saveAumCache(partial);
+    });
   }, [allRanked.length]);
 
   const catPeersMap = useMemo(() => {

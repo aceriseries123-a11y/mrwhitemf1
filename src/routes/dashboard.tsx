@@ -10,6 +10,7 @@ import { AppShell } from "@/components/AppShell";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
 import { storeSeries, mergeCategoryIntoStore, subscribeToRankedList, getFullRankedList, markScoringDone, isScoringDone, type RankedFund } from "../lib/fund-store";
 import { loadAumCache, saveAumCache } from "../lib/aum-cache";
+import { fetchAumForFunds } from "../lib/aum-fetch";
 import { computeEngineMetrics, buildBenchmark, scoreWithPeers, type EngineMetrics } from "../lib/scoring-engine";
 import { saveEngineCache, loadEngineCache } from "../lib/engine-cache";
 
@@ -206,16 +207,11 @@ function DashboardPage() {
 
 
   // ─── AUM Fetch ──────────────────────────────────────────────────────────────
-  // Fires once after scoring is fully complete (markScoringDone).
-  // Persistent 24h localStorage cache — resolved values survive page reloads.
-  //
-  // TWO sources called IN PARALLEL for every fund:
-  //   A) /api/public/scheme-aum       — Kuvera by ISIN (both ISINs in parallel)
-  //   B) /api/public/scheme-aum-mfdata — mfdata.in by scheme code (all funds)
-  // First non-null result per fund wins. mfdata covers funds Kuvera doesn't.
-  // Funds with no ISIN are still sent to source B — no ISIN needed there.
-  // Each source has its own Worker invocation so subrequest budgets don't compete.
-  // Batch=24, Concurrency=8 per source. One retry at 4s for failed batches.
+  // Fires once after scoring is fully complete. Calls Kuvera + mfdata.in
+  // DIRECTLY from the browser (both have CORS enabled) — no Worker proxy,
+  // no Cloudflare subrequest budget, no Worker timeout involved. See
+  // src/lib/aum-fetch.ts for the full rationale — this was the actual fix
+  // for AUM getting stuck partway through.
   const [aumMap, setAumMap] = useState<Map<string, number>>(loadAumCache);
   const aumFetchedRef = useRef(false);
   useEffect(() => {
@@ -223,76 +219,19 @@ function DashboardPage() {
     if (!isScoringDone()) return;
     aumFetchedRef.current = true;
 
-    const allFunds = getFullRankedList();
     const cached = loadAumCache();
-    const uncached = allFunds.filter(f => !cached.has(f.schemeCode));
+    const uncached = getFullRankedList()
+      .filter(f => !cached.has(f.schemeCode))
+      .map(f => ({ schemeCode: f.schemeCode, isin: f.isin, isin2: f.isin2 }));
     if (uncached.length === 0) return;
 
-    const BATCH = 24;
-    const CONC  = 8;
-    const collected: Record<string, number> = {};
-
-    const flush = () => {
-      setAumMap(new Map([...cached, ...Object.entries(collected)]));
-      saveAumCache(collected);
-    };
-
-    const kuveraEntries = uncached
-      .map(f => {
-        const isins = [f.isin, f.isin2].filter((x): x is string => !!x && x.startsWith("INF"));
-        return isins.length ? `${f.schemeCode}:${isins.join("|")}` : null;
-      })
-      .filter((x): x is string => x !== null);
-
-    const mfdataCodes = uncached.map(f => f.schemeCode);
-
-    const runBatched = async (
-      items: string[],
-      urlFn: (batch: string[]) => string,
-    ): Promise<string[]> => {
-      const batches: string[][] = [];
-      for (let i = 0; i < items.length; i += BATCH) batches.push(items.slice(i, i + BATCH));
-      const failed: string[] = [];
-      let cursor = 0;
-      await Promise.all(Array.from({ length: CONC }, async () => {
-        while (cursor < batches.length) {
-          const batch = batches[cursor++];
-          try {
-            const res = await fetch(urlFn(batch));
-            if (res.ok) {
-              const data = await res.json() as Record<string, number>;
-              Object.assign(collected, data);
-              flush();
-            } else { failed.push(...batch); }
-          } catch { failed.push(...batch); }
-        }
-      }));
-      return failed;
-    };
-
-    const run = async () => {
-      const [kFailed, mFailed] = await Promise.all([
-        kuveraEntries.length > 0
-          ? runBatched(kuveraEntries, b => `/api/public/scheme-aum?funds=${b.join(",")}`)
-          : Promise.resolve([]),
-        runBatched(mfdataCodes, b => `/api/public/scheme-aum-mfdata?codes=${b.join(",")}`),
-      ]);
-      const retry = [...kFailed, ...mFailed];
-      if (retry.length > 0) {
-        await new Promise(r => setTimeout(r, 4000));
-        const kRetry = retry.filter(s => s.includes(":"));
-        const mRetry = retry.filter(s => !s.includes(":"));
-        await Promise.all([
-          kRetry.length > 0 ? runBatched(kRetry, b => `/api/public/scheme-aum?funds=${b.join(",")}`) : Promise.resolve([]),
-          mRetry.length > 0 ? runBatched(mRetry, b => `/api/public/scheme-aum-mfdata?codes=${b.join(",")}`) : Promise.resolve([]),
-        ]);
-      }
-    };
-
-    run();
+    fetchAumForFunds(uncached, (partial) => {
+      setAumMap(new Map([...cached, ...partial]));
+      saveAumCache(partial);
+    });
   }, [allRanked]);
 
-    const toggleSort = (k: SortKey) => {
+  const toggleSort = (k: SortKey) => {
     if (sortKey === k) setSortDir(d => d === "desc" ? "asc" : "desc");
     else { setSortKey(k); setSortDir("desc"); }
   };
@@ -477,7 +416,7 @@ function DashboardPage() {
         <p className="text-[10px] leading-relaxed text-muted-foreground">
           <span className="text-foreground font-semibold">Avg Cal-Yr Ret</span> = arithmetic mean of each calendar year's Jan→Dec simple return. Hover cell to see per-year values.
           <span className="text-foreground font-semibold ml-2">Rolling 1Y Avg</span> = mean of ALL rolling 1-year point-to-point returns (every trading day as endpoint).
-          <span className="text-foreground font-semibold ml-2">Fund Size</span> = AUM queried from two independent sources in parallel — Kuvera (by AMFI ISIN) and mfdata.in (by AMFI scheme code) — whichever responds first is used, so funds Kuvera doesn't track can still resolve via mfdata.in. Cached locally for 24h once resolved; the app retries any still-missing funds once more after a short delay each session, and resolved values persist across reloads so coverage improves over repeated visits within the same day. Some funds may still show "—" if neither source has a record for that scheme.
+          <span className="text-foreground font-semibold ml-2">Fund Size</span> = AUM queried directly from the browser against two independent sources in parallel — Kuvera (by AMFI ISIN) and mfdata.in (by AMFI scheme code) — whichever responds first is used, so funds Kuvera doesn't track can still resolve via mfdata.in. Cached locally for 24h once resolved, and resolved values persist across reloads so coverage improves over repeated visits within the same day. Some funds may still show "—" if neither source has a record for that scheme.
         </p>
       </div>
     </AppShell>
