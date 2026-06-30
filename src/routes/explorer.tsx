@@ -17,7 +17,6 @@ import { AppShell } from "@/components/AppShell";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
 import { getFullRankedList, subscribeToRankedList, isScoringDone, type RankedFund } from "@/lib/fund-store";
 import { loadAumCache, saveAumCache } from "@/lib/aum-cache";
-import { fetchAumForFunds } from "@/lib/aum-fetch";
 import { QUANTFUND_CATEGORIES, categoryColor, type QuantFundCategory } from "@/lib/categories";
 import { computeExploreScore, computeRiskAdjReturn } from "@/lib/explore-metrics";
 
@@ -163,22 +162,69 @@ function FundExplorer() {
   const [allRanked, setAllRanked] = useState<RankedFund[]>(getFullRankedList);
   useEffect(() => subscribeToRankedList(() => setAllRanked(getFullRankedList())), []);
 
-  // AUM — direct browser-to-source fetch (both Kuvera + mfdata.in have CORS
-  // enabled), no Worker proxy/subrequest-budget involved. See aum-fetch.ts.
+  // AUM — same server-proxy logic as dashboard.tsx (see comments there).
   const [aumMap, setAumMap] = useState<Map<string, number>>(loadAumCache);
   const aumFetchedRef = useRef(false);
   useEffect(() => {
     if (!isScoringDone() || aumFetchedRef.current || allRanked.length === 0) return;
     aumFetchedRef.current = true;
     const cached = loadAumCache();
-    const uncached = allRanked
-      .filter(f => !cached.has(f.schemeCode))
-      .map(f => ({ schemeCode: f.schemeCode, isin: f.isin, isin2: f.isin2 }));
-    if (uncached.length === 0) return;
-    fetchAumForFunds(uncached, (partial) => {
-      setAumMap(new Map([...cached, ...partial]));
-      saveAumCache(partial);
-    });
+
+    const runFetch = async () => {
+      const entries = allRanked
+        .filter(f => !cached.has(f.schemeCode))
+        .map(f => {
+          const cands = [f.isin, f.isin2].filter((x): x is string => !!x && x.startsWith("INF"));
+          return cands.length ? `${f.schemeCode}:${cands.join("|")}` : null;
+        })
+        .filter((x): x is string => x != null);
+
+      if (entries.length === 0) return;
+
+      const BATCH = 18;
+      const CONCURRENCY = 6;
+      const collected: Record<string, number> = {};
+
+      const fetchBatch = async (batch: string[]): Promise<boolean> => {
+        try {
+          const res = await fetch(`/api/public/scheme-aum?funds=${batch.join(",")}`);
+          if (!res.ok) return false;
+          const data = await res.json() as Record<string, number>;
+          Object.assign(collected, data);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      const runRound = async (items: string[]): Promise<string[]> => {
+        const batches: string[][] = [];
+        for (let i = 0; i < items.length; i += BATCH) batches.push(items.slice(i, i + BATCH));
+        const failed: string[][] = [];
+        let cursor = 0;
+        const workers = Array.from({ length: CONCURRENCY }, async () => {
+          while (cursor < batches.length) {
+            const batch = batches[cursor++];
+            const ok = await fetchBatch(batch);
+            if (!ok) failed.push(batch);
+            setAumMap(new Map([...cached, ...Object.entries(collected)]));
+            saveAumCache(collected);
+          }
+        });
+        await Promise.all(workers);
+        return failed.flat();
+      };
+
+      let remaining = await runRound(entries);
+      const backoffs = [3000, 6000];
+      for (const delay of backoffs) {
+        if (remaining.length === 0) break;
+        await new Promise(r => setTimeout(r, delay));
+        remaining = await runRound(remaining);
+      }
+    };
+
+    runFetch();
   }, [allRanked.length]);
 
   const catPeersMap = useMemo(() => {
@@ -260,7 +306,7 @@ function FundExplorer() {
             <span><span className="text-cyan font-bold">Explore Score</span> = Sharpe(20%)+Sortino(15%)+Alpha(15%)+IR(15%)+RAR(15%)+Upside(10%)+Downside(10%)</span>
             <span><span className="text-positive font-bold">↑ Upside Cap</span> · full-green bar · <span className="text-positive">+1</span> if ≥100% (captured more rally than benchmark) · <span className="text-negative">-1</span> if &lt;100%</span>
             <span><span className="text-negative font-bold">↓ Downside Cap</span> · full-red bar · <span className="text-positive">+1</span> if ≤100% (fell less than benchmark) · <span className="text-negative">-1</span> if &gt;100%</span>
-            <span><span className="text-foreground">Fund Size</span>: AUM in ₹ Cr via Kuvera + mfdata.in (queried in parallel) — loaded after scoring completes</span>
+            <span><span className="text-foreground">Fund Size</span>: AUM in ₹ Cr via Kuvera — loaded after scoring completes</span>
           </div>
         </div>
 
@@ -288,7 +334,7 @@ function FundExplorer() {
                   <th className="p-3 font-medium text-muted-foreground">Fund</th>
                   <th className="p-3 font-medium text-muted-foreground">Category</th>
                   <SortTh label="Explore Score" k="exploreScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} accent title="7-component ratio score 0-100 (category-relative)" />
-                  <SortTh label="Fund Size" k="aum" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="AUM via Kuvera + mfdata.in, queried in parallel — loaded after scoring completes" />
+                  <SortTh label="Fund Size" k="aum" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="AUM via Kuvera — loaded after scoring completes" />
                   <SortTh label="Beta" k="beta" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Market sensitivity vs category benchmark" />
                   <SortTh label="Std Dev" k="stdDev" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Annualised volatility of daily returns" />
                   <SortTh label="Alpha (J)" k="jensensAlpha" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} title="Jensen's Alpha = fund 3Y CAGR − (RFR + β × (bm−RFR))" />
@@ -322,7 +368,7 @@ function FundExplorer() {
                           if (aum != null) {
                             return <span className="font-mono text-[11px] tabular-nums text-foreground">{aum >= 10000 ? `₹${(aum/1000).toFixed(1)}K Cr` : aum >= 1000 ? `₹${(aum/1000).toFixed(2)}K Cr` : `₹${aum.toFixed(0)} Cr`}</span>;
                           }
-                          return <span className="font-mono text-[10px] text-muted-foreground" title="Not found in Kuvera or mfdata.in — no record under any matched identifier">—</span>;
+                          return <span className="font-mono text-[10px] text-muted-foreground" title="No AUM record found in Kuvera for either AMFI ISIN">—</span>;
                         })()}
                       </td>
                       <td className="p-3 text-right">

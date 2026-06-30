@@ -21,7 +21,7 @@
  *   • Save is best-effort (quota exceeded → no-op)
  */
 
-const KEY = "qf-aum-cache-v4"; // v4: direct browser-to-source fetch (Kuvera + mfdata.in CORS), no Worker proxy
+const KEY = "qf-aum-cache-v5"; // v5: reverted to server-proxy (direct browser fetch was blocked in production)
 const TTL_MS = 24 * 60 * 60 * 1000;
 
 interface CachedEntry {
