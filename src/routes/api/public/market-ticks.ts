@@ -94,15 +94,16 @@ export const Route = createFileRoute("/api/public/market-ticks")({
               "Access-Control-Allow-Origin": "*",
             },
           });
-        } catch (e: any) {
+        } catch (e) {
+          console.error("[market-ticks] upstream failure", e);
           if (cache) {
             return Response.json(cache.ticks, {
               headers: { "X-Stale": "1", "Access-Control-Allow-Origin": "*" },
             });
           }
           return new Response(
-            JSON.stringify({ error: e?.message ?? "upstream failed" }),
-            { status: 502, headers: { "Content-Type": "application/json" } },
+            JSON.stringify({ error: "Market data temporarily unavailable" }),
+            { status: 502, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } },
           );
         }
       },

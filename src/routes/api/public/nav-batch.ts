@@ -83,7 +83,11 @@ export const Route = createFileRoute("/api/public/nav-batch")({
         let codes: string[] = [];
         try {
           const body = (await request.json()) as { codes?: string[] };
-          if (Array.isArray(body?.codes)) codes = body.codes.slice(0, 200);
+          if (Array.isArray(body?.codes)) {
+            codes = body.codes
+              .filter((s): s is string => typeof s === "string" && /^\d{5,6}$/.test(s))
+              .slice(0, 200);
+          }
         } catch { /* empty body */ }
 
         if (codes.length === 0) {
