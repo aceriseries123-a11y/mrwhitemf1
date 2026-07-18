@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "sdk_version": "0.23.0",
+  "path": "/mcp",
+  "auth": {
+    "type": "none"
+  },
+  "mcp": {
+    "server": {
+      "name": "quantfund-mcp",
+      "version": "0.1.0",
+      "title": "QuantFund — Indian Mutual Fund Research"
+    },
+    "tools": [
+      {
+        "name": "list_schemes",
+        "title": "List / search Indian mutual fund schemes",
+        "description": "Search the full AMFI open-ended mutual fund universe by name, AMC or scheme code, optionally filtered by SEBI category (e.g. 'Large Cap', 'ELSS'). Returns scheme code, name, AMC, category, latest NAV and NAV date.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": true
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Case-insensitive substring match across scheme name, AMC and scheme code. Empty string returns all schemes in the filter.",
+              "default": ""
+            },
+            "category": {
+              "type": "string",
+              "description": "Optional SEBI category filter, e.g. 'Large Cap', 'Mid Cap', 'Flexi Cap', 'ELSS', 'Aggressive Hybrid', 'Short Duration'.",
+              "default": ""
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "get_scheme",
+        "title": "Get mutual fund scheme details",
+        "description": "Fetch the latest AMFI-published details for a single scheme by its AMFI scheme code (numeric string, e.g. '119598').",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": true
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scheme_code": {
+              "type": "string",
+              "minLength": 1,
+              "description": "AMFI scheme code, e.g. '119598'."
+            }
+          },
+          "required": [
+            "scheme_code"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "get_nav_history",
+        "title": "Get NAV history for a mutual fund scheme",
+        "description": "Fetch historical daily Net Asset Values for an AMFI mutual fund scheme (sourced from mfapi.in, a community mirror of AMFI). Returns oldest-first.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": true
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scheme_code": {
+              "type": "string",
+              "minLength": 1,
+              "description": "AMFI scheme code, e.g. '119598'."
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2000,
+              "description": "Maximum number of most-recent NAV points to return. Use small values (e.g. 60) to keep responses compact.",
+              "default": 365
+            }
+          },
+          "required": [
+            "scheme_code"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "get_fund_metrics",
+        "title": "Get computed risk-adjusted metrics for a mutual fund",
+        "description": "Compute trailing returns (1M/3M/6M/1Y), CAGR (3Y/5Y/10Y), annualised volatility, Sharpe, Sortino, max drawdown and the QuantFund Score for an AMFI scheme, all derived from real NAV history. Risk-free rate: 6.50% p.a. (91-day G-Sec T-Bill).",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": true
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scheme_code": {
+              "type": "string",
+              "minLength": 1,
+              "description": "AMFI scheme code, e.g. '119598'."
+            }
+          },
+          "required": [
+            "scheme_code"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      }
+    ]
+  }
+}

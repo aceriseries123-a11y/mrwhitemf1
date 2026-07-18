@@ -17,17 +17,21 @@ import { Route as ResearchDeskRouteImport } from './routes/research-desk'
 import { Route as RankingsRouteImport } from './routes/rankings'
 import { Route as PortfolioRouteImport } from './routes/portfolio'
 import { Route as MethodologyRouteImport } from './routes/methodology'
+import { Route as McpRouteImport } from './routes/mcp'
 import { Route as ExplorerRouteImport } from './routes/explorer'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as CompareRouteImport } from './routes/compare'
 import { Route as BacktestRouteImport } from './routes/backtest'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as FundIdRouteImport } from './routes/fund.$id'
+import { Route as Char91DotwellKnownChar93OauthProtectedResourceRouteImport } from './routes/[.well-known]/oauth-protected-resource'
+import { Route as Char91DotmcpChar93ListToolsRouteImport } from './routes/[.mcp]/list-tools'
 import { Route as ApiPublicSchemeTerRouteImport } from './routes/api/public/scheme-ter'
 import { Route as ApiPublicSchemeAumRouteImport } from './routes/api/public/scheme-aum'
 import { Route as ApiPublicNavBatchRouteImport } from './routes/api/public/nav-batch'
 import { Route as ApiPublicMarketTicksRouteImport } from './routes/api/public/market-ticks'
 import { Route as ApiPublicAmfiNavallRouteImport } from './routes/api/public/amfi-navall'
+import { Route as Char91DotmcpChar93InvokeToolToolRouteImport } from './routes/[.mcp]/invoke-tool/$tool'
 
 const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
   id: '/sitemap.xml',
@@ -69,6 +73,11 @@ const MethodologyRoute = MethodologyRouteImport.update({
   path: '/methodology',
   getParentRoute: () => rootRouteImport,
 } as any)
+const McpRoute = McpRouteImport.update({
+  id: '/mcp',
+  path: '/mcp',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ExplorerRoute = ExplorerRouteImport.update({
   id: '/explorer',
   path: '/explorer',
@@ -99,6 +108,18 @@ const FundIdRoute = FundIdRouteImport.update({
   path: '/fund/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const Char91DotwellKnownChar93OauthProtectedResourceRoute =
+  Char91DotwellKnownChar93OauthProtectedResourceRouteImport.update({
+    id: '/.well-known/oauth-protected-resource',
+    path: '/.well-known/oauth-protected-resource',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const Char91DotmcpChar93ListToolsRoute =
+  Char91DotmcpChar93ListToolsRouteImport.update({
+    id: '/.mcp/list-tools',
+    path: '/.mcp/list-tools',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicSchemeTerRoute = ApiPublicSchemeTerRouteImport.update({
   id: '/api/public/scheme-ter',
   path: '/api/public/scheme-ter',
@@ -124,6 +145,12 @@ const ApiPublicAmfiNavallRoute = ApiPublicAmfiNavallRouteImport.update({
   path: '/api/public/amfi-navall',
   getParentRoute: () => rootRouteImport,
 } as any)
+const Char91DotmcpChar93InvokeToolToolRoute =
+  Char91DotmcpChar93InvokeToolToolRouteImport.update({
+    id: '/.mcp/invoke-tool/$tool',
+    path: '/.mcp/invoke-tool/$tool',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -131,6 +158,7 @@ export interface FileRoutesByFullPath {
   '/compare': typeof CompareRoute
   '/dashboard': typeof DashboardRoute
   '/explorer': typeof ExplorerRoute
+  '/mcp': typeof McpRoute
   '/methodology': typeof MethodologyRoute
   '/portfolio': typeof PortfolioRoute
   '/rankings': typeof RankingsRoute
@@ -139,7 +167,10 @@ export interface FileRoutesByFullPath {
   '/screener': typeof ScreenerRoute
   '/settings': typeof SettingsRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/.mcp/list-tools': typeof Char91DotmcpChar93ListToolsRoute
+  '/.well-known/oauth-protected-resource': typeof Char91DotwellKnownChar93OauthProtectedResourceRoute
   '/fund/$id': typeof FundIdRoute
+  '/.mcp/invoke-tool/$tool': typeof Char91DotmcpChar93InvokeToolToolRoute
   '/api/public/amfi-navall': typeof ApiPublicAmfiNavallRoute
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
   '/api/public/nav-batch': typeof ApiPublicNavBatchRoute
@@ -152,6 +183,7 @@ export interface FileRoutesByTo {
   '/compare': typeof CompareRoute
   '/dashboard': typeof DashboardRoute
   '/explorer': typeof ExplorerRoute
+  '/mcp': typeof McpRoute
   '/methodology': typeof MethodologyRoute
   '/portfolio': typeof PortfolioRoute
   '/rankings': typeof RankingsRoute
@@ -160,7 +192,10 @@ export interface FileRoutesByTo {
   '/screener': typeof ScreenerRoute
   '/settings': typeof SettingsRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/.mcp/list-tools': typeof Char91DotmcpChar93ListToolsRoute
+  '/.well-known/oauth-protected-resource': typeof Char91DotwellKnownChar93OauthProtectedResourceRoute
   '/fund/$id': typeof FundIdRoute
+  '/.mcp/invoke-tool/$tool': typeof Char91DotmcpChar93InvokeToolToolRoute
   '/api/public/amfi-navall': typeof ApiPublicAmfiNavallRoute
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
   '/api/public/nav-batch': typeof ApiPublicNavBatchRoute
@@ -174,6 +209,7 @@ export interface FileRoutesById {
   '/compare': typeof CompareRoute
   '/dashboard': typeof DashboardRoute
   '/explorer': typeof ExplorerRoute
+  '/mcp': typeof McpRoute
   '/methodology': typeof MethodologyRoute
   '/portfolio': typeof PortfolioRoute
   '/rankings': typeof RankingsRoute
@@ -182,7 +218,10 @@ export interface FileRoutesById {
   '/screener': typeof ScreenerRoute
   '/settings': typeof SettingsRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/.mcp/list-tools': typeof Char91DotmcpChar93ListToolsRoute
+  '/.well-known/oauth-protected-resource': typeof Char91DotwellKnownChar93OauthProtectedResourceRoute
   '/fund/$id': typeof FundIdRoute
+  '/.mcp/invoke-tool/$tool': typeof Char91DotmcpChar93InvokeToolToolRoute
   '/api/public/amfi-navall': typeof ApiPublicAmfiNavallRoute
   '/api/public/market-ticks': typeof ApiPublicMarketTicksRoute
   '/api/public/nav-batch': typeof ApiPublicNavBatchRoute
@@ -197,6 +236,7 @@ export interface FileRouteTypes {
     | '/compare'
     | '/dashboard'
     | '/explorer'
+    | '/mcp'
     | '/methodology'
     | '/portfolio'
     | '/rankings'
@@ -205,7 +245,10 @@ export interface FileRouteTypes {
     | '/screener'
     | '/settings'
     | '/sitemap.xml'
+    | '/.mcp/list-tools'
+    | '/.well-known/oauth-protected-resource'
     | '/fund/$id'
+    | '/.mcp/invoke-tool/$tool'
     | '/api/public/amfi-navall'
     | '/api/public/market-ticks'
     | '/api/public/nav-batch'
@@ -218,6 +261,7 @@ export interface FileRouteTypes {
     | '/compare'
     | '/dashboard'
     | '/explorer'
+    | '/mcp'
     | '/methodology'
     | '/portfolio'
     | '/rankings'
@@ -226,7 +270,10 @@ export interface FileRouteTypes {
     | '/screener'
     | '/settings'
     | '/sitemap.xml'
+    | '/.mcp/list-tools'
+    | '/.well-known/oauth-protected-resource'
     | '/fund/$id'
+    | '/.mcp/invoke-tool/$tool'
     | '/api/public/amfi-navall'
     | '/api/public/market-ticks'
     | '/api/public/nav-batch'
@@ -239,6 +286,7 @@ export interface FileRouteTypes {
     | '/compare'
     | '/dashboard'
     | '/explorer'
+    | '/mcp'
     | '/methodology'
     | '/portfolio'
     | '/rankings'
@@ -247,7 +295,10 @@ export interface FileRouteTypes {
     | '/screener'
     | '/settings'
     | '/sitemap.xml'
+    | '/.mcp/list-tools'
+    | '/.well-known/oauth-protected-resource'
     | '/fund/$id'
+    | '/.mcp/invoke-tool/$tool'
     | '/api/public/amfi-navall'
     | '/api/public/market-ticks'
     | '/api/public/nav-batch'
@@ -261,6 +312,7 @@ export interface RootRouteChildren {
   CompareRoute: typeof CompareRoute
   DashboardRoute: typeof DashboardRoute
   ExplorerRoute: typeof ExplorerRoute
+  McpRoute: typeof McpRoute
   MethodologyRoute: typeof MethodologyRoute
   PortfolioRoute: typeof PortfolioRoute
   RankingsRoute: typeof RankingsRoute
@@ -269,7 +321,10 @@ export interface RootRouteChildren {
   ScreenerRoute: typeof ScreenerRoute
   SettingsRoute: typeof SettingsRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
+  Char91DotmcpChar93ListToolsRoute: typeof Char91DotmcpChar93ListToolsRoute
+  Char91DotwellKnownChar93OauthProtectedResourceRoute: typeof Char91DotwellKnownChar93OauthProtectedResourceRoute
   FundIdRoute: typeof FundIdRoute
+  Char91DotmcpChar93InvokeToolToolRoute: typeof Char91DotmcpChar93InvokeToolToolRoute
   ApiPublicAmfiNavallRoute: typeof ApiPublicAmfiNavallRoute
   ApiPublicMarketTicksRoute: typeof ApiPublicMarketTicksRoute
   ApiPublicNavBatchRoute: typeof ApiPublicNavBatchRoute
@@ -335,6 +390,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MethodologyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/mcp': {
+      id: '/mcp'
+      path: '/mcp'
+      fullPath: '/mcp'
+      preLoaderRoute: typeof McpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/explorer': {
       id: '/explorer'
       path: '/explorer'
@@ -377,6 +439,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FundIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/.well-known/oauth-protected-resource': {
+      id: '/.well-known/oauth-protected-resource'
+      path: '/.well-known/oauth-protected-resource'
+      fullPath: '/.well-known/oauth-protected-resource'
+      preLoaderRoute: typeof Char91DotwellKnownChar93OauthProtectedResourceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/.mcp/list-tools': {
+      id: '/.mcp/list-tools'
+      path: '/.mcp/list-tools'
+      fullPath: '/.mcp/list-tools'
+      preLoaderRoute: typeof Char91DotmcpChar93ListToolsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/scheme-ter': {
       id: '/api/public/scheme-ter'
       path: '/api/public/scheme-ter'
@@ -412,6 +488,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicAmfiNavallRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/.mcp/invoke-tool/$tool': {
+      id: '/.mcp/invoke-tool/$tool'
+      path: '/.mcp/invoke-tool/$tool'
+      fullPath: '/.mcp/invoke-tool/$tool'
+      preLoaderRoute: typeof Char91DotmcpChar93InvokeToolToolRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -421,6 +504,7 @@ const rootRouteChildren: RootRouteChildren = {
   CompareRoute: CompareRoute,
   DashboardRoute: DashboardRoute,
   ExplorerRoute: ExplorerRoute,
+  McpRoute: McpRoute,
   MethodologyRoute: MethodologyRoute,
   PortfolioRoute: PortfolioRoute,
   RankingsRoute: RankingsRoute,
@@ -429,7 +513,11 @@ const rootRouteChildren: RootRouteChildren = {
   ScreenerRoute: ScreenerRoute,
   SettingsRoute: SettingsRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
+  Char91DotmcpChar93ListToolsRoute: Char91DotmcpChar93ListToolsRoute,
+  Char91DotwellKnownChar93OauthProtectedResourceRoute:
+    Char91DotwellKnownChar93OauthProtectedResourceRoute,
   FundIdRoute: FundIdRoute,
+  Char91DotmcpChar93InvokeToolToolRoute: Char91DotmcpChar93InvokeToolToolRoute,
   ApiPublicAmfiNavallRoute: ApiPublicAmfiNavallRoute,
   ApiPublicMarketTicksRoute: ApiPublicMarketTicksRoute,
   ApiPublicNavBatchRoute: ApiPublicNavBatchRoute,
